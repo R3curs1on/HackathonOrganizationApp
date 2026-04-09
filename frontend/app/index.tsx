@@ -1,18 +1,119 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { StyleSheet, Text, View, TextInput, TouchableOpacity, Modal } from 'react-native';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Linking,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as Haptics from 'expo-haptics';
+import Constants from 'expo-constants';
 import axios from 'axios';
 
-// The Localhost Trap: use internal IP or ngrok!
 const rawApiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
-const API_URL = /^https?:\/\//.test(rawApiUrl) ? rawApiUrl : `http://${rawApiUrl}`;
 const LOG_PREFIX = '[HackathonApp]';
+
+function resolveApiUrl() {
+  const normalizedFromEnv = /^https?:\/\//.test(rawApiUrl) ? rawApiUrl : `http://${rawApiUrl}`;
+  const parsed = new URL(normalizedFromEnv);
+  const envHost = parsed.hostname.toLowerCase();
+
+  if (envHost !== 'localhost' && envHost !== '127.0.0.1') {
+    return normalizedFromEnv;
+  }
+
+  const constantsData = Constants as unknown as {
+    expoConfig?: { hostUri?: string };
+    manifest?: { debuggerHost?: string };
+  };
+
+  const hostUri = constantsData.expoConfig?.hostUri || constantsData.manifest?.debuggerHost || '';
+  const detectedHost = hostUri.split(':')[0];
+
+  if (!detectedHost) {
+    return normalizedFromEnv;
+  }
+
+  const port = parsed.port || '5000';
+  return `${parsed.protocol}//${detectedHost}:${port}`;
+}
+
+const API_URL = resolveApiUrl();
 
 const api = axios.create({
   baseURL: API_URL,
   timeout: 10000,
 });
+
+type ActionType = 'register' | 'redbull' | 'dinner';
+type ScreenTab = 'scanner' | 'dashboard' | 'evaluation';
+type OverlayType = 'success' | 'error';
+
+type DashboardStats = {
+  totalParticipants: number;
+  registeredParticipants: number;
+  remainingParticipants: number;
+  dinnerTaken: number;
+  dinnerPending: number;
+  totalTeams: number;
+  registeredTeams: number;
+  remainingTeams: number;
+};
+
+type TeamDashboardRow = {
+  team_name: string;
+  lab_no: string;
+  participant_count: number;
+  registered_count: number;
+  remaining_count: number;
+  dinner_count: number;
+  dinner_pending_count: number;
+  team_registered: boolean;
+};
+
+type DashboardResponse = DashboardStats & {
+  teams: TeamDashboardRow[];
+  serverTime: string;
+};
+
+type EvaluationRow = {
+  team_name: string;
+  lab_no: string;
+  participant_count: number;
+  innovation: number;
+  technical: number;
+  impact: number;
+  presentation: number;
+  total: number;
+  remarks: string;
+  evaluated: boolean;
+  evaluated_at: string | null;
+  updatedAt: string | null;
+};
+
+type EvaluationsResponse = {
+  count: number;
+  evaluations: EvaluationRow[];
+  serverTime: string;
+};
+
+const EMPTY_STATS: DashboardStats = {
+  totalParticipants: 0,
+  registeredParticipants: 0,
+  remainingParticipants: 0,
+  dinnerTaken: 0,
+  dinnerPending: 0,
+  totalTeams: 0,
+  registeredTeams: 0,
+  remainingTeams: 0,
+};
+
+const POLL_INTERVAL_MS = 5000;
 
 function log(event: string, payload?: Record<string, unknown>) {
   if (payload) {
@@ -54,241 +155,560 @@ api.interceptors.response.use(
   }
 );
 
-type ActionType = 'register' | 'redbull' | 'dinner';
+function getErrorMessage(error: any): string {
+  return String(error?.response?.data?.error || error?.message || 'Unexpected error');
+}
+
+function toScoreValue(value: string): number {
+  const score = Number(value);
+  if (!Number.isFinite(score) || score < 0) {
+    return 0;
+  }
+  return Math.round(score * 100) / 100;
+}
 
 export default function App() {
   const [permission, requestPermission] = useCameraPermissions();
-  const [scanned, setScanned] = useState(false);
+  const [activeScreen, setActiveScreen] = useState<ScreenTab>('scanner');
+  const [activeAction, setActiveAction] = useState<ActionType>('register');
   const [mobileNum, setMobileNum] = useState('');
-  const [activeTab, setActiveTab] = useState<ActionType>('register');
-  const [checkInCount, setCheckInCount] = useState(0);
+
+  const [scanned, setScanned] = useState(false);
   const scanLockRef = useRef(false);
 
   const [overlayVisible, setOverlayVisible] = useState(false);
-  const [overlayType, setOverlayType] = useState<'success' | 'error'>('success');
+  const [overlayType, setOverlayType] = useState<OverlayType>('success');
   const [overlayMessage, setOverlayMessage] = useState('');
   const [overlaySubMessage, setOverlaySubMessage] = useState('');
 
-  useEffect(() => {
-    log('APP_MOUNT', { rawApiUrl, resolvedApiUrl: API_URL });
-    fetchStats();
-    const interval = setInterval(fetchStats, 5000);
-    log('STATS_POLLING_STARTED', { intervalMs: 5000 });
-    return () => {
-      clearInterval(interval);
-      log('APP_UNMOUNT');
-    };
-  }, []);
+  const [stats, setStats] = useState<DashboardStats>(EMPTY_STATS);
+  const [teams, setTeams] = useState<TeamDashboardRow[]>([]);
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [dashboardError, setDashboardError] = useState('');
 
-  useEffect(() => {
-    if (!permission) {
-      log('CAMERA_PERMISSION_STATE', { permissionLoaded: false });
-      return;
-    }
-    log('CAMERA_PERMISSION_STATE', {
-      permissionLoaded: true,
-      granted: permission.granted,
-      canAskAgain: permission.canAskAgain,
-      expires: permission.expires,
-    });
-  }, [permission]);
+  const [evaluations, setEvaluations] = useState<EvaluationRow[]>([]);
+  const [evaluationLoading, setEvaluationLoading] = useState(false);
+  const [evaluationError, setEvaluationError] = useState('');
+  const [evaluationSearch, setEvaluationSearch] = useState('');
 
-  const fetchStats = async () => {
-    log('FETCH_STATS_START');
-    try {
-      const res = await api.get('/stats');
-      setCheckInCount(res.data.checkInCount);
-      log('FETCH_STATS_SUCCESS', { checkInCount: res.data.checkInCount });
-    } catch (error: any) {
-      log('FETCH_STATS_FAIL', {
-        message: error?.message,
-        code: error?.code,
-        status: error?.response?.status,
-        data: error?.response?.data ?? null,
-      });
-    }
-  };
+  const [formTeamName, setFormTeamName] = useState('');
+  const [formLabNo, setFormLabNo] = useState('');
+  const [formInnovation, setFormInnovation] = useState('0');
+  const [formTechnical, setFormTechnical] = useState('0');
+  const [formImpact, setFormImpact] = useState('0');
+  const [formPresentation, setFormPresentation] = useState('0');
+  const [formRemarks, setFormRemarks] = useState('');
 
-  const handleAction = async (mobile: string, source: 'scan' | 'manual') => {
-    const normalizedMobile = mobile.trim().replace(/\.0$/, '');
-    if (!normalizedMobile) {
-      log('ACTION_SKIPPED_EMPTY_MOBILE', { source, mobileInput: mobile });
-      if (source === 'scan') {
-        setScanned(false);
-        scanLockRef.current = false;
-        log('SCAN_LOCK_RELEASED', { reason: 'empty_mobile' });
-      }
-      return;
-    }
-
-    log('ACTION_START', { source, type: activeTab, mobile: normalizedMobile });
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    
-    try {
-      const res = await api.post('/action', { mobile: normalizedMobile, type: activeTab });
-      const { name, team_name, lab_no } = res.data;
-      const nextMessage = team_name || 'Success!';
-      const nextSubMessage = lab_no ? `Lab: ${lab_no} - ${name || ''}` : (name || '');
-      
-      log('ACTION_SUCCESS', {
-        source,
-        type: activeTab,
-        mobile: normalizedMobile,
-        name,
-        team_name,
-        lab_no: lab_no || '',
-      });
-      showOverlay('success', nextMessage, nextSubMessage);
-      
-      if (activeTab === 'register') fetchStats();
-    } catch (error: any) {
-      const nextSubMessage = error.response?.data?.error || error.message;
-      log('ACTION_FAIL', {
-        source,
-        type: activeTab,
-        mobile: normalizedMobile,
-        message: error?.message,
-        code: error?.code,
-        status: error?.response?.status,
-        data: error?.response?.data ?? null,
-      });
-      showOverlay('error', 'Error!', nextSubMessage);
-    }
-  };
-
-  const showOverlay = (
-    nextType: 'success' | 'error',
-    nextMessage: string,
-    nextSubMessage: string
-  ) => {
-    setOverlayType(nextType);
-    setOverlayMessage(nextMessage);
-    setOverlaySubMessage(nextSubMessage);
-    log('OVERLAY_SHOW', {
-      overlayType: nextType,
-      overlayMessage: nextMessage,
-      overlaySubMessage: nextSubMessage,
-    });
+  const showOverlay = useCallback((type: OverlayType, message: string, subMessage: string) => {
+    setOverlayType(type);
+    setOverlayMessage(message);
+    setOverlaySubMessage(subMessage);
     setOverlayVisible(true);
+
     setTimeout(() => {
       setOverlayVisible(false);
       setScanned(false);
-      log('OVERLAY_HIDE');
       scanLockRef.current = false;
-      log('SCAN_LOCK_RELEASED', { reason: 'overlay_hide' });
     }, 2000);
-  };
+  }, []);
 
-  const onBarcodeScanned = (barcode: { data: string }) => {
-    log('BARCODE_SCANNED', {
-      scanned,
-      scanLock: scanLockRef.current,
-      overlayVisible,
-      rawData: barcode.data,
-    });
-    if (scanLockRef.current || scanned || overlayVisible) {
-      log('BARCODE_IGNORED', {
-        reason: scanLockRef.current
-          ? 'scan_lock_active'
-          : scanned
-            ? 'already_processing'
-            : 'overlay_visible',
+  const hydrateEvaluationForm = useCallback((team: EvaluationRow) => {
+    setFormTeamName(team.team_name);
+    setFormLabNo(team.lab_no || '');
+    setFormInnovation(String(team.innovation || 0));
+    setFormTechnical(String(team.technical || 0));
+    setFormImpact(String(team.impact || 0));
+    setFormPresentation(String(team.presentation || 0));
+    setFormRemarks(team.remarks || '');
+  }, []);
+
+  const fetchDashboard = useCallback(async (showLoader: boolean) => {
+    if (showLoader) {
+      setDashboardLoading(true);
+    }
+
+    try {
+      const response = await api.get<DashboardResponse>('/dashboard');
+      setStats({
+        totalParticipants: response.data.totalParticipants,
+        registeredParticipants: response.data.registeredParticipants,
+        remainingParticipants: response.data.remainingParticipants,
+        dinnerTaken: response.data.dinnerTaken,
+        dinnerPending: response.data.dinnerPending,
+        totalTeams: response.data.totalTeams,
+        registeredTeams: response.data.registeredTeams,
+        remainingTeams: response.data.remainingTeams,
       });
+      setTeams(response.data.teams || []);
+      setDashboardError('');
+    } catch (error: any) {
+      const message = getErrorMessage(error);
+      setDashboardError(message);
+      log('FETCH_DASHBOARD_FAIL', { message });
+    } finally {
+      if (showLoader) {
+        setDashboardLoading(false);
+      }
+    }
+  }, []);
+
+  const fetchEvaluations = useCallback(
+    async (showLoader: boolean) => {
+      if (showLoader) {
+        setEvaluationLoading(true);
+      }
+
+      try {
+        const response = await api.get<EvaluationsResponse>('/evaluations');
+        const nextEvaluations = response.data.evaluations || [];
+        setEvaluations(nextEvaluations);
+        setEvaluationError('');
+
+        if (!formTeamName && nextEvaluations.length > 0) {
+          hydrateEvaluationForm(nextEvaluations[0]);
+        }
+      } catch (error: any) {
+        const message = getErrorMessage(error);
+        setEvaluationError(message);
+        log('FETCH_EVALUATIONS_FAIL', { message });
+      } finally {
+        if (showLoader) {
+          setEvaluationLoading(false);
+        }
+      }
+    },
+    [formTeamName, hydrateEvaluationForm]
+  );
+
+  useEffect(() => {
+    log('APP_MOUNT', { rawApiUrl, resolvedApiUrl: API_URL });
+
+    void fetchDashboard(true);
+    void fetchEvaluations(true);
+
+    const dashboardTimer = setInterval(() => {
+      void fetchDashboard(false);
+    }, POLL_INTERVAL_MS);
+
+    const evaluationTimer = setInterval(() => {
+      void fetchEvaluations(false);
+    }, POLL_INTERVAL_MS);
+
+    return () => {
+      clearInterval(dashboardTimer);
+      clearInterval(evaluationTimer);
+      log('APP_UNMOUNT');
+    };
+  }, [fetchDashboard, fetchEvaluations]);
+
+  const handleAction = useCallback(
+    async (mobile: string, source: 'scan' | 'manual') => {
+      const normalizedMobile = mobile.trim().replace(/\.0$/, '');
+
+      if (!normalizedMobile) {
+        if (source === 'scan') {
+          setScanned(false);
+          scanLockRef.current = false;
+        }
+        return;
+      }
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      try {
+        const response = await api.post('/action', {
+          mobile: normalizedMobile,
+          type: activeAction,
+        });
+
+        const teamName = String(response.data?.team_name || 'Team N/A');
+        const labNo = String(response.data?.lab_no || 'N/A');
+        const name = String(response.data?.name || '');
+
+        const statusMessage =
+          activeAction === 'register'
+            ? response.data?.alreadyRegistered
+              ? 'Already Registered'
+              : 'Registered'
+            : activeAction === 'dinner'
+              ? 'Dinner Marked'
+              : 'Claimed';
+
+        showOverlay(
+          'success',
+          statusMessage,
+          `${teamName} | Lab: ${labNo}${name ? ` | ${name}` : ''}`
+        );
+
+        if (source === 'manual') {
+          setMobileNum('');
+        }
+
+        void fetchDashboard(false);
+      } catch (error: any) {
+        const message = getErrorMessage(error);
+        showOverlay('error', 'Action Failed', message);
+      }
+    },
+    [activeAction, fetchDashboard, showOverlay]
+  );
+
+  const onBarcodeScanned = useCallback(
+    (barcode: { data: string }) => {
+      if (scanLockRef.current || scanned || overlayVisible) {
+        return;
+      }
+
+      scanLockRef.current = true;
+      setScanned(true);
+      void handleAction(barcode.data, 'scan');
+    },
+    [handleAction, overlayVisible, scanned]
+  );
+
+  const openExport = useCallback(
+    async (path: string) => {
+      const url = `${API_URL}${path}`;
+      try {
+        await Linking.openURL(url);
+        showOverlay('success', 'Export Opened', url);
+      } catch {
+        showOverlay('error', 'Export Failed', `Open manually: ${url}`);
+      }
+    },
+    [showOverlay]
+  );
+
+  const filteredEvaluations = useMemo(() => {
+    const query = evaluationSearch.trim().toLowerCase();
+    if (!query) {
+      return evaluations;
+    }
+
+    return evaluations.filter((item) => {
+      const team = item.team_name.toLowerCase();
+      const lab = String(item.lab_no || '').toLowerCase();
+      return team.includes(query) || lab.includes(query);
+    });
+  }, [evaluationSearch, evaluations]);
+
+  const selectedEvaluation = useMemo(
+    () => evaluations.find((item) => item.team_name === formTeamName) || null,
+    [evaluations, formTeamName]
+  );
+
+  const liveTotal = useMemo(
+    () =>
+      toScoreValue(formInnovation) +
+      toScoreValue(formTechnical) +
+      toScoreValue(formImpact) +
+      toScoreValue(formPresentation),
+    [formImpact, formInnovation, formPresentation, formTechnical]
+  );
+
+  const saveEvaluation = useCallback(async () => {
+    if (!formTeamName) {
+      showOverlay('error', 'No Team Selected', 'Select a team before saving evaluation');
       return;
     }
 
-    scanLockRef.current = true;
-    log('SCAN_LOCK_SET');
-    setScanned(true);
-    handleAction(barcode.data, 'scan');
-  };
+    try {
+      await api.post('/evaluations', {
+        team_name: formTeamName,
+        lab_no: formLabNo,
+        innovation: toScoreValue(formInnovation),
+        technical: toScoreValue(formTechnical),
+        impact: toScoreValue(formImpact),
+        presentation: toScoreValue(formPresentation),
+        remarks: formRemarks,
+      });
 
-  if (!permission) {
-    log('CAMERA_PERMISSION_PENDING');
-    return <View />;
-  }
-  if (!permission.granted) {
-    return (
-      <View style={styles.centerContainer}>
-        <Text style={{ textAlign: 'center' }}>We need your permission to show the camera</Text>
-        <TouchableOpacity
-          style={styles.button}
-          onPress={() => {
-            log('CAMERA_PERMISSION_REQUEST');
-            requestPermission();
-          }}
-        >
-          <Text style={styles.buttonText}>Grant Permission</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+      showOverlay('success', 'Evaluation Saved', `${formTeamName} | Lab: ${formLabNo || 'N/A'}`);
+      void fetchEvaluations(false);
+    } catch (error: any) {
+      showOverlay('error', 'Save Failed', getErrorMessage(error));
+    }
+  }, [
+    fetchEvaluations,
+    formImpact,
+    formInnovation,
+    formLabNo,
+    formPresentation,
+    formRemarks,
+    formTeamName,
+    formTechnical,
+    showOverlay,
+  ]);
 
   return (
     <View style={styles.container}>
-      {/* Top Header */}
       <View style={styles.header}>
-        <Text style={styles.headerText}>Check-in Count: {checkInCount}</Text>
+        <Text style={styles.headerTitle}>Hackathon Live Console</Text>
+        <Text style={styles.headerSubtitle}>
+          Teams {stats.registeredTeams}/{stats.totalTeams} | Participants {stats.registeredParticipants}/
+          {stats.totalParticipants} | Dinner {stats.dinnerTaken}/{stats.totalParticipants}
+        </Text>
       </View>
 
-      {/* Camera Full Screen */}
-      <View style={styles.cameraContainer}>
-        <CameraView
-          style={StyleSheet.absoluteFillObject}
-          onBarcodeScanned={scanned ? undefined : onBarcodeScanned}
-          barcodeScannerSettings={{
-            barcodeTypes: ['qr'],
-          }}
-        />
+      <View style={styles.screenTabsRow}>
+        {(['scanner', 'dashboard', 'evaluation'] as ScreenTab[]).map((tab) => (
+          <TouchableOpacity
+            key={tab}
+            style={[styles.screenTabBtn, activeScreen === tab && styles.screenTabBtnActive]}
+            onPress={() => setActiveScreen(tab)}
+          >
+            <Text style={[styles.screenTabText, activeScreen === tab && styles.screenTabTextActive]}>
+              {tab.toUpperCase()}
+            </Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
-      {/* Bottom Controls */}
-      <View style={styles.controlsContainer}>
-        {/* Search Bar */}
-        <View style={styles.searchRow}>
+      {activeScreen === 'scanner' && (
+        <View style={styles.screenBody}>
+          <View style={styles.cameraPanel}>
+            {permission?.granted ? (
+              <CameraView
+                style={StyleSheet.absoluteFillObject}
+                onBarcodeScanned={scanned ? undefined : onBarcodeScanned}
+                barcodeScannerSettings={{
+                  barcodeTypes: ['qr'],
+                }}
+              />
+            ) : (
+              <View style={styles.permissionCard}>
+                <Text style={styles.permissionText}>Camera permission is needed only for QR scanning.</Text>
+                <TouchableOpacity style={styles.primaryButton} onPress={() => requestPermission()}>
+                  <Text style={styles.primaryButtonText}>Grant Camera Permission</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+          </View>
+
+          <View style={styles.controlsContainer}>
+            <View style={styles.searchRow}>
+              <TextInput
+                style={styles.input}
+                placeholder="Manual mobile entry"
+                value={mobileNum}
+                onChangeText={setMobileNum}
+                keyboardType="phone-pad"
+              />
+              <TouchableOpacity
+                style={[styles.primaryButton, styles.searchButton]}
+                onPress={() => void handleAction(mobileNum, 'manual')}
+              >
+                <Text style={styles.primaryButtonText}>Go</Text>
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.tabRow}>
+              {(['register', 'redbull', 'dinner'] as ActionType[]).map((tab) => (
+                <TouchableOpacity
+                  key={tab}
+                  style={[styles.tabBtn, activeAction === tab && styles.activeTabBtn]}
+                  onPress={() => setActiveAction(tab)}
+                >
+                  <Text style={[styles.tabText, activeAction === tab && styles.activeTabText]}>{tab.toUpperCase()}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={styles.noteText}>
+              Register is idempotent. Dinner stays one-time only and will reject duplicate claims.
+            </Text>
+          </View>
+        </View>
+      )}
+
+      {activeScreen === 'dashboard' && (
+        <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
+          {dashboardLoading && teams.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
+          {dashboardError ? <Text style={styles.errorText}>Dashboard error: {dashboardError}</Text> : null}
+
+          <View style={styles.metricGrid}>
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Registered Teams</Text>
+              <Text style={styles.metricValue}>
+                {stats.registeredTeams} / {stats.totalTeams}
+              </Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Registered Participants</Text>
+              <Text style={styles.metricValue}>
+                {stats.registeredParticipants} / {stats.totalParticipants}
+              </Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Participants Remaining</Text>
+              <Text style={styles.metricValue}>{stats.remainingParticipants}</Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Dinner Taken</Text>
+              <Text style={styles.metricValue}>{stats.dinnerTaken}</Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Dinner Pending</Text>
+              <Text style={styles.metricValue}>{stats.dinnerPending}</Text>
+            </View>
+
+            <View style={styles.metricCard}>
+              <Text style={styles.metricLabel}>Teams Remaining</Text>
+              <Text style={styles.metricValue}>{stats.remainingTeams}</Text>
+            </View>
+          </View>
+
+          <Text style={styles.sectionTitle}>Exports</Text>
+          <View style={styles.exportRow}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/teams?format=csv')}
+            >
+              <Text style={styles.secondaryButtonText}>Teams CSV</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/participants?format=csv')}
+            >
+              <Text style={styles.secondaryButtonText}>Participants CSV</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.exportRow}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/teams?format=json')}
+            >
+              <Text style={styles.secondaryButtonText}>Teams JSON</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/participants?format=json')}
+            >
+              <Text style={styles.secondaryButtonText}>Participants JSON</Text>
+            </TouchableOpacity>
+          </View>
+
+          <Text style={styles.sectionTitle}>Team Live List ({teams.length})</Text>
+          {teams.map((team) => (
+            <View key={`${team.team_name}-${team.lab_no}`} style={styles.teamRow}>
+              <View style={styles.teamRowTop}>
+                <Text style={styles.teamName}>{team.team_name || 'Unassigned Team'}</Text>
+                <Text style={styles.teamLab}>Lab {team.lab_no || 'N/A'}</Text>
+              </View>
+              <Text style={styles.teamMeta}>
+                Registered {team.registered_count}/{team.participant_count} | Remaining {team.remaining_count}
+              </Text>
+              <Text style={styles.teamMeta}>
+                Dinner {team.dinner_count}/{team.participant_count} | Pending {team.dinner_pending_count}
+              </Text>
+            </View>
+          ))}
+        </ScrollView>
+      )}
+
+      {activeScreen === 'evaluation' && (
+        <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
+          {evaluationLoading && evaluations.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
+          {evaluationError ? <Text style={styles.errorText}>Evaluation error: {evaluationError}</Text> : null}
+
+          <Text style={styles.sectionTitle}>Evaluation Exports</Text>
+          <View style={styles.exportRow}>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/evaluations?format=csv')}
+            >
+              <Text style={styles.secondaryButtonText}>Evaluation CSV</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={styles.secondaryButton}
+              onPress={() => void openExport('/exports/evaluations?format=json')}
+            >
+              <Text style={styles.secondaryButtonText}>Evaluation JSON</Text>
+            </TouchableOpacity>
+          </View>
+
           <TextInput
             style={styles.input}
-            placeholder="Manual Mobile Entry"
-            value={mobileNum}
-            onChangeText={(value) => {
-              setMobileNum(value);
-              log('MOBILE_INPUT_CHANGE', { value });
-            }}
-            keyboardType="phone-pad"
+            placeholder="Search by team name or lab"
+            value={evaluationSearch}
+            onChangeText={setEvaluationSearch}
           />
-          <TouchableOpacity
-            style={styles.searchButton}
-            onPress={() => {
-              log('MANUAL_SUBMIT_CLICK', { mobileInput: mobileNum, type: activeTab });
-              handleAction(mobileNum, 'manual');
-            }}
-          >
-            <Text style={styles.buttonText}>Go</Text>
-          </TouchableOpacity>
-        </View>
 
-        {/* Tab Selector */}
-        <View style={styles.tabRow}>
-          {(['register', 'redbull', 'dinner'] as ActionType[]).map((tab) => (
-            <TouchableOpacity
-              key={tab}
-              style={[styles.tabBtn, activeTab === tab && styles.activeTabBtn]}
-              onPress={() => {
-                setActiveTab(tab);
-                log('ACTION_TAB_CHANGE', { selected: tab });
-              }}
-            >
-              <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-                {tab.toUpperCase()}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      </View>
+          <ScrollView style={styles.teamPicker} nestedScrollEnabled>
+            {filteredEvaluations.map((item) => (
+              <TouchableOpacity
+                key={item.team_name}
+                style={[styles.teamPickRow, formTeamName === item.team_name && styles.teamPickRowActive]}
+                onPress={() => hydrateEvaluationForm(item)}
+              >
+                <Text style={styles.teamPickName}>{item.team_name}</Text>
+                <Text style={styles.teamPickMeta}>Lab {item.lab_no || 'N/A'} | Total {item.total.toFixed(2)}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
 
-      {/* Overlay Modal */}
+          {selectedEvaluation ? (
+            <View style={styles.evalFormCard}>
+              <Text style={styles.evalFormTitle}>{formTeamName}</Text>
+              <Text style={styles.evalFormSubtitle}>Lab {formLabNo || 'N/A'}</Text>
+
+              <Text style={styles.fieldLabel}>Innovation</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="decimal-pad"
+                value={formInnovation}
+                onChangeText={setFormInnovation}
+              />
+
+              <Text style={styles.fieldLabel}>Technical</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="decimal-pad"
+                value={formTechnical}
+                onChangeText={setFormTechnical}
+              />
+
+              <Text style={styles.fieldLabel}>Impact</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="decimal-pad"
+                value={formImpact}
+                onChangeText={setFormImpact}
+              />
+
+              <Text style={styles.fieldLabel}>Presentation</Text>
+              <TextInput
+                style={styles.input}
+                keyboardType="decimal-pad"
+                value={formPresentation}
+                onChangeText={setFormPresentation}
+              />
+
+              <Text style={styles.fieldLabel}>Remarks</Text>
+              <TextInput
+                style={[styles.input, styles.remarksInput]}
+                multiline
+                value={formRemarks}
+                onChangeText={setFormRemarks}
+              />
+
+              <Text style={styles.evalTotalText}>Live Total: {liveTotal.toFixed(2)}</Text>
+              <TouchableOpacity style={styles.primaryButton} onPress={() => void saveEvaluation()}>
+                <Text style={styles.primaryButtonText}>Save Evaluation</Text>
+              </TouchableOpacity>
+            </View>
+          ) : (
+            <Text style={styles.noteText}>No team found. Check your registration import data.</Text>
+          )}
+        </ScrollView>
+      )}
+
       <Modal visible={overlayVisible} transparent animationType="fade">
-        <View style={[styles.overlay, { backgroundColor: overlayType === 'success' ? '#2ecc71' : '#e74c3c' }]}>
+        <View style={[styles.overlay, overlayType === 'success' ? styles.overlaySuccess : styles.overlayError]}>
           <Text style={styles.overlayText}>{overlayMessage}</Text>
           <Text style={styles.overlaySubText}>{overlaySubMessage}</Text>
         </View>
@@ -298,23 +718,306 @@ export default function App() {
 }
 
 const styles = StyleSheet.create({
-  centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { paddingTop: 60, paddingBottom: 20, backgroundColor: '#333', alignItems: 'center' },
-  headerText: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  cameraContainer: { flex: 1 },
-  controlsContainer: { backgroundColor: '#333', padding: 20, paddingBottom: 40 },
-  searchRow: { flexDirection: 'row', marginBottom: 20 },
-  input: { flex: 1, backgroundColor: '#fff', borderRadius: 8, paddingHorizontal: 15, height: 50, fontSize: 16 },
-  searchButton: { backgroundColor: '#3498db', justifyContent: 'center', alignItems: 'center', borderRadius: 8, paddingHorizontal: 20, marginLeft: 10 },
-  buttonText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  tabRow: { flexDirection: 'row', justifyContent: 'space-between' },
-  tabBtn: { flex: 1, height: 50, justifyContent: 'center', alignItems: 'center', backgroundColor: '#555', marginHorizontal: 5, borderRadius: 8 },
-  activeTabBtn: { backgroundColor: '#f1c40f' },
-  tabText: { color: '#ccc', fontWeight: 'bold' },
-  activeTabText: { color: '#000' },
-  button: { marginTop: 20, backgroundColor: '#3498db', padding: 15, borderRadius: 8 },
-  overlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-  overlayText: { fontSize: 48, fontWeight: 'bold', color: '#fff', textAlign: 'center', marginBottom: 10 },
-  overlaySubText: { fontSize: 24, color: '#fff', textAlign: 'center' },
+  container: {
+    flex: 1,
+    backgroundColor: '#111',
+  },
+  header: {
+    paddingTop: 56,
+    paddingBottom: 14,
+    paddingHorizontal: 16,
+    backgroundColor: '#1e1e1e',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 21,
+    fontWeight: '800',
+  },
+  headerSubtitle: {
+    color: '#d4d4d4',
+    marginTop: 6,
+    fontSize: 13,
+  },
+  screenTabsRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 8,
+    paddingVertical: 8,
+    backgroundColor: '#202020',
+  },
+  screenTabBtn: {
+    flex: 1,
+    marginHorizontal: 4,
+    backgroundColor: '#343434',
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 42,
+  },
+  screenTabBtnActive: {
+    backgroundColor: '#f1c40f',
+  },
+  screenTabText: {
+    color: '#c5c5c5',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  screenTabTextActive: {
+    color: '#111',
+  },
+  screenBody: {
+    flex: 1,
+  },
+  cameraPanel: {
+    height: 320,
+    margin: 12,
+    borderRadius: 12,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  permissionCard: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+    backgroundColor: '#252525',
+  },
+  permissionText: {
+    color: '#ddd',
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  controlsContainer: {
+    backgroundColor: '#1e1e1e',
+    padding: 16,
+    marginHorizontal: 12,
+    marginBottom: 12,
+    borderRadius: 12,
+  },
+  searchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  input: {
+    flex: 1,
+    backgroundColor: '#fff',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    height: 44,
+    marginVertical: 6,
+  },
+  tabRow: {
+    marginTop: 12,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  tabBtn: {
+    flex: 1,
+    height: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#4a4a4a',
+    marginHorizontal: 4,
+    borderRadius: 8,
+  },
+  activeTabBtn: {
+    backgroundColor: '#f1c40f',
+  },
+  tabText: {
+    color: '#d0d0d0',
+    fontWeight: '700',
+    fontSize: 12,
+  },
+  activeTabText: {
+    color: '#111',
+  },
+  noteText: {
+    color: '#c5c5c5',
+    marginTop: 12,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  dashboardContent: {
+    padding: 12,
+    paddingBottom: 32,
+  },
+  metricGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+  },
+  metricCard: {
+    width: '48.5%',
+    backgroundColor: '#252525',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 10,
+  },
+  metricLabel: {
+    color: '#bfbfbf',
+    fontSize: 12,
+  },
+  metricValue: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '800',
+    marginTop: 4,
+  },
+  sectionTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  exportRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 8,
+  },
+  primaryButton: {
+    backgroundColor: '#3498db',
+    borderRadius: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+  },
+  searchButton: {
+    marginLeft: 8,
+  },
+  primaryButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  secondaryButton: {
+    flex: 1,
+    backgroundColor: '#2f2f2f',
+    borderWidth: 1,
+    borderColor: '#555',
+    borderRadius: 8,
+    minHeight: 42,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 4,
+  },
+  secondaryButtonText: {
+    color: '#f2f2f2',
+    fontWeight: '600',
+    fontSize: 12,
+  },
+  teamRow: {
+    backgroundColor: '#222',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 8,
+  },
+  teamRowTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 4,
+  },
+  teamName: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    flex: 1,
+    marginRight: 8,
+  },
+  teamLab: {
+    color: '#f1c40f',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  teamMeta: {
+    color: '#c9c9c9',
+    fontSize: 12,
+    marginTop: 2,
+  },
+  teamPicker: {
+    maxHeight: 220,
+    backgroundColor: '#1f1f1f',
+    borderRadius: 10,
+    marginTop: 6,
+  },
+  teamPickRow: {
+    padding: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#2f2f2f',
+  },
+  teamPickRowActive: {
+    backgroundColor: '#333',
+  },
+  teamPickName: {
+    color: '#fff',
+    fontWeight: '700',
+  },
+  teamPickMeta: {
+    color: '#c7c7c7',
+    fontSize: 12,
+    marginTop: 3,
+  },
+  evalFormCard: {
+    marginTop: 12,
+    backgroundColor: '#1f1f1f',
+    borderRadius: 10,
+    padding: 12,
+  },
+  evalFormTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  evalFormSubtitle: {
+    color: '#f1c40f',
+    marginTop: 2,
+    marginBottom: 8,
+    fontWeight: '600',
+  },
+  fieldLabel: {
+    color: '#d0d0d0',
+    marginTop: 6,
+    fontSize: 12,
+  },
+  remarksInput: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+    paddingTop: 10,
+  },
+  evalTotalText: {
+    color: '#fff',
+    fontSize: 17,
+    fontWeight: '800',
+    marginTop: 8,
+    marginBottom: 8,
+  },
+  errorText: {
+    color: '#ff7675',
+    marginBottom: 8,
+  },
+  overlay: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+  },
+  overlaySuccess: {
+    backgroundColor: 'rgba(46, 204, 113, 0.95)',
+  },
+  overlayError: {
+    backgroundColor: 'rgba(231, 76, 60, 0.95)',
+  },
+  overlayText: {
+    fontSize: 40,
+    fontWeight: '800',
+    color: '#fff',
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  overlaySubText: {
+    fontSize: 18,
+    color: '#fff',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
 });
