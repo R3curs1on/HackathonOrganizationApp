@@ -392,6 +392,11 @@ export default function App() {
     });
   }, [evaluationSearch, evaluations]);
 
+  const registeredTeamsOnly = useMemo(
+    () => teams.filter((team) => team.registered_count > 0 || team.team_registered),
+    [teams]
+  );
+
   const selectedEvaluation = useMemo(
     () => evaluations.find((item) => item.team_name === formTeamName) || null,
     [evaluations, formTeamName]
@@ -561,6 +566,20 @@ export default function App() {
               <Text style={styles.metricValue}>{stats.remainingTeams}</Text>
             </View>
           </View>
+
+          <Text style={styles.sectionTitle}>Registered Teams ({registeredTeamsOnly.length})</Text>
+          {registeredTeamsOnly.length === 0 ? (
+            <Text style={styles.noteText}>No teams registered yet.</Text>
+          ) : (
+            registeredTeamsOnly.map((team) => (
+              <View key={`registered-${team.team_name}-${team.lab_no}`} style={styles.registeredRow}>
+                <Text style={styles.registeredName}>{team.team_name || 'Unassigned Team'}</Text>
+                <Text style={styles.registeredMeta}>
+                  Lab {team.lab_no || 'N/A'} | Registered {team.registered_count}/{team.participant_count}
+                </Text>
+              </View>
+            ))
+          )}
 
           <Text style={styles.sectionTitle}>Exports</Text>
           <View style={styles.exportRow}>
@@ -933,6 +952,24 @@ const styles = StyleSheet.create({
     color: '#c9c9c9',
     fontSize: 12,
     marginTop: 2,
+  },
+  registeredRow: {
+    backgroundColor: '#1d2b1f',
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#2e5f35',
+    padding: 10,
+    marginBottom: 8,
+  },
+  registeredName: {
+    color: '#d6ffd6',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  registeredMeta: {
+    color: '#b2e9b2',
+    fontSize: 12,
+    marginTop: 3,
   },
   teamPicker: {
     maxHeight: 220,
