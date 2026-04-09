@@ -117,6 +117,7 @@ def import_csv(csv_path: str, collection):
                         "mobile": mobile,
                         "team_name": team_name,
                         "lab_no": lab_no,
+                        "registered": False,
                         "is_present": False,
                         "has_redbull": False,
                         "has_dinner": False,

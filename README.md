@@ -70,7 +70,9 @@ A React Native-based Expo app for organizing and managing hackathons or events s
    Open `frontend/app/index.tsx` and map `API_URL` to your machine's **Internal IP Address** (e.g., `http://192.168.1.100:5000`) rather than `localhost`.
 4. Start the Expo development server:
    ```bash
-   npx expo start
+   npx expo start --lan 
+   or
+  EXPO_PUBLIC_API_URL=<your-internal-ip>:5000 npx expo start --lan
    ```
 5. Scan the QR code presented in the terminal using the Expo Go app on your phone.
 
