@@ -1,91 +1,147 @@
 # HackathonOrganizationApp
 
-A React Native-based Expo app for organizing and managing hackathons or events seamlessly based on registration data. Designed to scale for 1000+ participants with minimal latency.
+Expo + Node/Mongo app for hackathon operations: QR-based registration, live team dashboard, and team evaluations.
 
-## Architecture
+## Stack
+- Frontend: Expo React Native
+- Backend: Express + Mongoose
+- Database: MongoDB
+- Data scripts: Python (`pymongo`)
 
-* **Frontend:** React Native / Expo (Camera, Haptics, Axios)
-* **Backend:** Node.js, Express, Mongoose
-* **Database:** MongoDB
-* **Data Pipeline:** Python (pymongo)
+## Key Updates
+- Default `lab_no` is now `1000` (model + import fallback).
+- Register action always marks participant present/registered and returns lab number.
+- Results and evaluation endpoints are passphrase-protected.
+- Evaluation model simplified to 3 columns:
+  - `evaluation_1`
+  - `evaluation_2`
+  - `final_presentation`
+  - `total` is auto-calculated.
+- QR generation now creates team-wise folders:
+  - `qr_codes/<team_folder>/<mobile>.png`
 
-## Prerequisites
+## Tech Passphrase Protection
+- Protected sections: dashboard, evaluations, and exports.
+- Default passphrases:
+  - `acm@enigma`
+  - `youdontknowmeson`
+- Override in backend with:
+  - `TECH_PASSPHRASES=pass1,pass2`
 
-* Node.js (v16 or higher)
-* Python 3
-* MongoDB (running locally on port 27017)
-* Expo Go (installed on your physical device for testing)
+## Environment Templates
+- Backend template: `backend/.env.example`
+- Frontend template: `frontend/.env.example`
 
-## Project Structure
+Optional local setup from repo root:
+```bash
+cp backend/.env.example backend/.env
+cp frontend/.env.example frontend/.env
+```
 
-* `/backend` - Node.js/Express server and MongoDB models.
-* `/frontend` - Expo/React Native application.
-* `import_data.py` - Python script for bulk importing registration data.
+## Local Setup
 
-## Setup Instructions
+### 1) Start MongoDB
+Use local MongoDB (default expected URI: `mongodb://127.0.0.1:27017/`).
 
-### 1. Database and Data Import
+### 2) Import participants CSV
+```bash
+python3 -m pip install pymongo
+python3 scripts/import_data.py "Breaking Enigma 4.0 – Payment Confirmation Form  (Responses) - Form Responses 1.csv"
+```
 
-1. Ensure your local MongoDB instance is running at `mongodb://localhost:27017`.
-2. Place your event registration data in a file named `participants.csv` in the root directory.
-   The CSV must contain the following exact column headers:
-   * `Candidate's Mobile`
-   * `Candidate's Name`
-   * `Team Name`
-   * `Lab No`
-3. Run the import script to populate the database:
+Notes:
+- If `Lab No` is missing/blank, `1000` is used.
+- Re-running import updates existing records by mobile (useful when exact lab numbers are assigned later).
 
-   ```bash
-   pip install pymongo
-   python3 import_data.py
-   ```
+### 3) Generate team-wise QR codes
+```bash
+python3 -m pip install "qrcode[pil]" pandas openpyxl
+python3 scripts/generate_qr_codes.py --input "Breaking Enigma 4.0 – Payment Confirmation Form  (Responses) - Form Responses 1.csv" --output-dir qr_codes --overwrite
+```
 
-### 2. Backend Setup
+### 4) Optional fake test participants (10)
+```bash
+python3 scripts/seed_fake_participants.py
+```
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Start the server:
-   ```bash
-   node server.js
-   ```
-   The backend will be available at `http://localhost:5000`.
+Fake records are clearly tagged with `[FAKE]` and `is_fake: true`.
 
-### 3. Frontend Setup
+### 5) Start backend
+```bash
+cd backend
+npm install
+node server.js
+```
 
-1. Navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Update the API Address:
-   Open `frontend/app/index.tsx` and map `API_URL` to your machine's **Internal IP Address** (e.g., `http://192.168.1.100:5000`) rather than `localhost`.
-4. Start the Expo development server:
-   ```bash
-   npx expo start --lan 
-   or
-  EXPO_PUBLIC_API_URL=<your-internal-ip>:5000 npx expo start --lan
-   ```
-5. Scan the QR code presented in the terminal using the Expo Go app on your phone.
+### 6) Start frontend
+```bash
+cd frontend
+npm install
+EXPO_PUBLIC_API_URL=<your-lan-ip>:5000 npx expo start --lan
+```
 
-## Important Note: The Localhost Trap
+## Live Deployment (Recommended)
 
-When testing the Expo app on your physical mobile device, you cannot use `localhost` in your API calls, because your phone does not know what `localhost` is. 
+Why local fails for cloud APK builds:
+- `localhost` inside the Android app points to the phone/emulator itself, not your laptop.
+- EAS cloud builds also cannot access your local `server.js`.
 
-**Fix:** Use your laptop's Internal IP Address (e.g., `192.168.1.XX:5000`) in `frontend/app/index.tsx` or use Ngrok to create a temporary public URL for your local backend.
+### 1) Deploy MongoDB to Atlas
+- Create a cluster.
+- Create a database user.
+- In Atlas Network Access, add allowed IPs (quick test: `0.0.0.0/0`, then tighten later).
+- Copy the `mongodb+srv://...` connection string.
 
-## Features
+### 2) Deploy backend (`backend/`) to a public host (example: Render Web Service)
+- Root Directory: `backend`
+- Build Command: `npm install`
+- Start Command: `node server.js`
+- Health Check Path: `/health`
+- Environment variables:
+  - `MONGO_URI=<your mongodb+srv connection string>`
+  - `TECH_PASSPHRASES=<comma-separated passphrases>`
+  - `DEFAULT_LAB_NO=1000`
 
-* **Quick Check-in:** Scan participant QR codes (containing their mobile number) to register their attendance instantly.
-* **Multi-action Toggles:** Switch between Registration, RedBull, and Dinner claims directly from a single screen.
-* **Manual Entry:** Search bar provided for manual mobile number entry in case a QR code is unreadable.
-* **Live Stats:** Real-time counter of checked-in participants.
-* **Fast Feedback:** Huge success (Green) or error (Red) screen overlays appear for 2 seconds alongside haptic vibration feedback for every action.
+After deploy, verify:
+```bash
+curl https://<your-backend-domain>/health
+```
+
+### 3) Set EAS environment variable for frontend builds
+From `frontend/`:
+```bash
+eas env:create --name EXPO_PUBLIC_API_URL --value https://<your-backend-domain> --environment preview --visibility plaintext
+eas env:create --name EXPO_PUBLIC_API_URL --value https://<your-backend-domain> --environment production --visibility plaintext
+```
+
+### 4) Build a new Android APK
+```bash
+cd frontend
+npm run build:android
+```
+
+Install the newly generated APK. Older APKs built with `localhost` will keep failing until rebuilt.
+
+## Installable Android + iOS Builds (EAS)
+
+`frontend/eas.json` is configured for internal builds.
+
+### One-time
+```bash
+cd frontend
+npm install -g eas-cli
+eas login
+eas build:configure
+```
+
+### Build Android APK (installable)
+```bash
+npm run build:android
+```
+
+### Build iOS installable build (internal distribution)
+```bash
+npm run build:ios
+```
+
+You’ll get download/install links from EAS build output.

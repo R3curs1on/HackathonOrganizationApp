@@ -1,0 +1,13 @@
+Regn_1660436_BasicInfo_20260331_1704_Filters.xlsx
+participants.csv
+qr_codes/
+
+# Environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python cache
+__pycache__/
+*.py[cod]

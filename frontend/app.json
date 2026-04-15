@@ -1,19 +1,24 @@
 {
   "expo": {
-    "name": "frontend",
-    "slug": "frontend",
+    "name": "Breaking Enigma Console",
+    "slug": "breaking-enigma-console",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "frontend",
+    "scheme": "breakingenigma",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.acm.breakingenigma.console",
+      "buildNumber": "1"
     },
     "android": {
+      "package": "com.acm.breakingenigma.console",
+      "versionCode": 1,
       "permissions": [
-        "VIBRATE"
+        "VIBRATE",
+        "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
@@ -42,11 +47,22 @@
           }
         }
       ],
-      "expo-barcode-scanner"
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Breaking Enigma Console to use camera for QR scanning."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a8b28958-f44a-434f-afc0-97d0e9be9798"
+      }
     }
   }
 }

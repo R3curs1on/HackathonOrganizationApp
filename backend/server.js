@@ -13,6 +13,13 @@ app.use(cors());
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/hackathon';
 const PORT = Number(process.env.PORT || 5000);
 const HOST = process.env.HOST || '0.0.0.0';
+const DEFAULT_LAB_NO = process.env.DEFAULT_LAB_NO || '1000';
+const TECH_PASSPHRASES = String(
+  process.env.TECH_PASSPHRASES || 'acm@enigma,youdontknowmeson'
+)
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
 
 function now() {
   return new Date().toISOString();
@@ -56,6 +63,11 @@ function normalizeMobile(rawMobile) {
   return String(rawMobile || '').trim().replace(/\.0$/, '');
 }
 
+function normalizeLabNo(rawLabNo) {
+  const value = String(rawLabNo || '').trim();
+  return value || DEFAULT_LAB_NO;
+}
+
 function isRegistered(participant) {
   return Boolean(participant?.registered || participant?.is_present);
 }
@@ -91,6 +103,56 @@ function sendCsv(res, filename, csvContent) {
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
   res.send(`\uFEFF${csvContent}`);
+}
+
+function sanitizeSensitive(value) {
+  if (Array.isArray(value)) {
+    return value.map((entry) => sanitizeSensitive(entry));
+  }
+
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+
+  const blockedKeys = new Set(['passphrase', 'password', 'x-tech-passphrase']);
+  const copy = {};
+  Object.entries(value).forEach(([key, val]) => {
+    if (blockedKeys.has(String(key).toLowerCase())) {
+      copy[key] = '***';
+      return;
+    }
+    copy[key] = sanitizeSensitive(val);
+  });
+  return copy;
+}
+
+function getPassphrase(req) {
+  const headerValue = req.headers['x-tech-passphrase'];
+  if (headerValue) {
+    return String(headerValue).trim();
+  }
+
+  if (req.query?.passphrase) {
+    return String(req.query.passphrase).trim();
+  }
+
+  if (req.body?.passphrase) {
+    return String(req.body.passphrase).trim();
+  }
+
+  return '';
+}
+
+function isValidPassphrase(passphrase) {
+  return TECH_PASSPHRASES.includes(passphrase);
+}
+
+function requireTechAccess(req, res, next) {
+  const passphrase = getPassphrase(req);
+  if (!isValidPassphrase(passphrase)) {
+    return res.status(401).json({ error: 'Tech passphrase required' });
+  }
+  next();
 }
 
 async function getDashboardStats() {
@@ -151,7 +213,14 @@ async function getTeamDashboardList() {
       $project: {
         _id: 0,
         team_name: { $ifNull: ['$_id', ''] },
-        lab_no: { $ifNull: ['$lab_no', ''] },
+        lab_no: {
+          $ifNull: [
+            {
+              $cond: [{ $eq: [{ $ifNull: ['$lab_no', ''] }, ''] }, DEFAULT_LAB_NO, '$lab_no'],
+            },
+            DEFAULT_LAB_NO,
+          ],
+        },
         participant_count: 1,
         registered_count: 1,
         remaining_count: {
@@ -178,10 +247,11 @@ async function getParticipantList() {
     mobile: doc.mobile || '',
     name: doc.name || '',
     team_name: doc.team_name || '',
-    lab_no: doc.lab_no || '',
+    lab_no: normalizeLabNo(doc.lab_no),
     registered: Boolean(doc.registered || doc.is_present),
     has_dinner: Boolean(doc.has_dinner),
     has_redbull: Boolean(doc.has_redbull),
+    is_fake: Boolean(doc.is_fake),
   }));
 }
 
@@ -204,7 +274,14 @@ async function getMergedEvaluations() {
         $project: {
           _id: 0,
           team_name: '$_id',
-          lab_no: { $ifNull: ['$lab_no', ''] },
+          lab_no: {
+            $ifNull: [
+              {
+                $cond: [{ $eq: [{ $ifNull: ['$lab_no', ''] }, ''] }, DEFAULT_LAB_NO, '$lab_no'],
+              },
+              DEFAULT_LAB_NO,
+            ],
+          },
           participant_count: 1,
         },
       },
@@ -222,12 +299,11 @@ async function getMergedEvaluations() {
   teamBaseList.forEach((team) => {
     map.set(team.team_name, {
       team_name: team.team_name,
-      lab_no: team.lab_no || '',
+      lab_no: normalizeLabNo(team.lab_no),
       participant_count: team.participant_count || 0,
-      innovation: 0,
-      technical: 0,
-      impact: 0,
-      presentation: 0,
+      evaluation_1: 0,
+      evaluation_2: 0,
+      final_presentation: 0,
       total: 0,
       remarks: '',
       evaluated: false,
@@ -239,18 +315,27 @@ async function getMergedEvaluations() {
   evalDocs.forEach((entry) => {
     const existing = map.get(entry.team_name) || {
       team_name: entry.team_name,
-      lab_no: entry.lab_no || '',
+      lab_no: normalizeLabNo(entry.lab_no),
       participant_count: 0,
     };
 
+    const evaluation1 = normalizeScore(entry.evaluation_1 ?? entry.innovation);
+    const evaluation2 = normalizeScore(entry.evaluation_2 ?? entry.technical);
+    const finalPresentation = normalizeScore(entry.final_presentation ?? entry.presentation);
+    const totalFromLegacy = normalizeScore(entry.innovation) +
+      normalizeScore(entry.technical) +
+      normalizeScore(entry.impact) +
+      normalizeScore(entry.presentation);
+    const computedTotal = evaluation1 + evaluation2 + finalPresentation;
+    const total = normalizeScore(entry.total);
+
     map.set(entry.team_name, {
       ...existing,
-      lab_no: entry.lab_no || existing.lab_no || '',
-      innovation: entry.innovation || 0,
-      technical: entry.technical || 0,
-      impact: entry.impact || 0,
-      presentation: entry.presentation || 0,
-      total: entry.total || 0,
+      lab_no: normalizeLabNo(entry.lab_no || existing.lab_no),
+      evaluation_1: evaluation1,
+      evaluation_2: evaluation2,
+      final_presentation: finalPresentation,
+      total: total || computedTotal || totalFromLegacy,
       remarks: entry.remarks || '',
       evaluated: true,
       evaluated_at: entry.evaluated_at || null,
@@ -266,7 +351,13 @@ async function getMergedEvaluations() {
   });
 }
 
-log('SERVER_BOOT', { host: HOST, port: PORT, mongoUri: MONGO_URI });
+log('SERVER_BOOT', {
+  host: HOST,
+  port: PORT,
+  mongoUri: MONGO_URI,
+  defaultLabNo: DEFAULT_LAB_NO,
+  techPassphraseCount: TECH_PASSPHRASES.length,
+});
 
 mongoose.connection.on('connected', () => log('MONGO_CONNECTED'));
 mongoose.connection.on('error', (err) => logError('MONGO_ERROR', err));
@@ -284,7 +375,7 @@ app.use((req, res, next) => {
     method: req.method,
     path: req.originalUrl,
     ip: req.ip,
-    body: req.body || null,
+    body: sanitizeSensitive(req.body || null),
   });
 
   res.on('finish', () => {
@@ -312,6 +403,14 @@ app.get('/health', (req, res) => {
   });
 });
 
+app.post('/tech/unlock', (req, res) => {
+  const passphrase = getPassphrase(req);
+  if (!isValidPassphrase(passphrase)) {
+    return res.status(401).json({ error: 'Invalid passphrase' });
+  }
+  return res.json({ success: true, unlocked: true, serverTime: now() });
+});
+
 app.post('/action', async (req, res) => {
   const type = req.body?.type;
   const mobile = normalizeMobile(req.body?.mobile);
@@ -330,6 +429,7 @@ app.post('/action', async (req, res) => {
 
     if (type === 'register') {
       const alreadyRegistered = isRegistered(participant);
+      participant.lab_no = normalizeLabNo(participant.lab_no);
       participant.registered = true;
       participant.is_present = true;
       await participant.save();
@@ -347,6 +447,8 @@ app.post('/action', async (req, res) => {
         name: participant.name,
         team_name: participant.team_name,
         lab_no: participant.lab_no,
+        isRegister: true,
+        isRegistered: true,
         registered: true,
       });
     }
@@ -364,6 +466,7 @@ app.post('/action', async (req, res) => {
       }
 
       participant[flag] = true;
+      participant.lab_no = normalizeLabNo(participant.lab_no);
       await participant.save();
       log('ACTION_CLAIM_SUCCESS', {
         requestId: req.requestId,
@@ -389,7 +492,7 @@ app.post('/action', async (req, res) => {
   }
 });
 
-app.get('/stats', async (req, res) => {
+app.get('/stats', requireTechAccess, async (req, res) => {
   try {
     const stats = await getDashboardStats();
     log('STATS_SUCCESS', { requestId: req.requestId, stats });
@@ -404,7 +507,7 @@ app.get('/stats', async (req, res) => {
   }
 });
 
-app.get('/dashboard', async (req, res) => {
+app.get('/dashboard', requireTechAccess, async (req, res) => {
   try {
     const [stats, teams] = await Promise.all([getDashboardStats(), getTeamDashboardList()]);
     res.json({
@@ -418,7 +521,7 @@ app.get('/dashboard', async (req, res) => {
   }
 });
 
-app.get('/dashboard/participants', async (req, res) => {
+app.get('/dashboard/participants', requireTechAccess, async (req, res) => {
   try {
     const participants = await getParticipantList();
     res.json({ count: participants.length, participants, serverTime: now() });
@@ -428,7 +531,7 @@ app.get('/dashboard/participants', async (req, res) => {
   }
 });
 
-app.get('/exports/participants', async (req, res) => {
+app.get('/exports/participants', requireTechAccess, async (req, res) => {
   try {
     const format = String(req.query.format || 'csv').toLowerCase();
     const participants = await getParticipantList();
@@ -449,6 +552,7 @@ app.get('/exports/participants', async (req, res) => {
       { key: 'registered', label: 'Registered' },
       { key: 'has_dinner', label: 'Dinner Taken' },
       { key: 'has_redbull', label: 'RedBull Taken' },
+      { key: 'is_fake', label: 'Fake Test Entry' },
     ];
 
     const csv = toCsv(headers, participants);
@@ -460,7 +564,7 @@ app.get('/exports/participants', async (req, res) => {
   }
 });
 
-app.get('/exports/teams', async (req, res) => {
+app.get('/exports/teams', requireTechAccess, async (req, res) => {
   try {
     const format = String(req.query.format || 'csv').toLowerCase();
     const teams = await getTeamDashboardList();
@@ -493,7 +597,7 @@ app.get('/exports/teams', async (req, res) => {
   }
 });
 
-app.get('/evaluations', async (req, res) => {
+app.get('/evaluations', requireTechAccess, async (req, res) => {
   try {
     const evaluations = await getMergedEvaluations();
     res.json({ count: evaluations.length, evaluations, serverTime: now() });
@@ -503,7 +607,7 @@ app.get('/evaluations', async (req, res) => {
   }
 });
 
-app.post('/evaluations', async (req, res) => {
+app.post('/evaluations', requireTechAccess, async (req, res) => {
   const teamName = String(req.body?.team_name || '').trim();
   const providedLabNo = String(req.body?.lab_no || '').trim();
 
@@ -512,24 +616,22 @@ app.post('/evaluations', async (req, res) => {
   }
 
   try {
-    const innovation = normalizeScore(req.body?.innovation);
-    const technical = normalizeScore(req.body?.technical);
-    const impact = normalizeScore(req.body?.impact);
-    const presentation = normalizeScore(req.body?.presentation);
-    const total = innovation + technical + impact + presentation;
+    const evaluation1 = normalizeScore(req.body?.evaluation_1);
+    const evaluation2 = normalizeScore(req.body?.evaluation_2);
+    const finalPresentation = normalizeScore(req.body?.final_presentation);
+    const total = evaluation1 + evaluation2 + finalPresentation;
 
     const existingParticipant = await Participant.findOne({ team_name: teamName }).lean();
-    const labNo = providedLabNo || existingParticipant?.lab_no || '';
+    const labNo = normalizeLabNo(providedLabNo || existingParticipant?.lab_no);
 
     const evaluation = await Evaluation.findOneAndUpdate(
       { team_name: teamName },
       {
         team_name: teamName,
         lab_no: labNo,
-        innovation,
-        technical,
-        impact,
-        presentation,
+        evaluation_1: evaluation1,
+        evaluation_2: evaluation2,
+        final_presentation: finalPresentation,
         total,
         remarks: String(req.body?.remarks || '').trim(),
         evaluated_at: new Date(),
@@ -550,7 +652,7 @@ app.post('/evaluations', async (req, res) => {
   }
 });
 
-app.get('/exports/evaluations', async (req, res) => {
+app.get('/exports/evaluations', requireTechAccess, async (req, res) => {
   try {
     const format = String(req.query.format || 'csv').toLowerCase();
     const evaluations = await getMergedEvaluations();
@@ -567,10 +669,9 @@ app.get('/exports/evaluations', async (req, res) => {
       { key: 'team_name', label: 'Team Name' },
       { key: 'lab_no', label: 'Lab No' },
       { key: 'participant_count', label: 'Participants' },
-      { key: 'innovation', label: 'Innovation' },
-      { key: 'technical', label: 'Technical' },
-      { key: 'impact', label: 'Impact' },
-      { key: 'presentation', label: 'Presentation' },
+      { key: 'evaluation_1', label: 'Evaluation 1' },
+      { key: 'evaluation_2', label: 'Evaluation 2' },
+      { key: 'final_presentation', label: 'Final Presentation' },
       { key: 'total', label: 'Total' },
       { key: 'remarks', label: 'Remarks' },
       { key: 'evaluated', label: 'Evaluated' },

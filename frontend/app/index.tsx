@@ -15,10 +15,16 @@ import * as Haptics from 'expo-haptics';
 import Constants from 'expo-constants';
 import axios from 'axios';
 
-const rawApiUrl = process.env.EXPO_PUBLIC_API_URL || 'http://localhost:5000';
+const configuredApiUrl = String(process.env.EXPO_PUBLIC_API_URL || '').trim();
+const rawApiUrl = configuredApiUrl || (__DEV__ ? 'http://localhost:5000' : '');
 const LOG_PREFIX = '[HackathonApp]';
+const API_CONFIG_ERROR_MSG = 'API URL missing. Set EXPO_PUBLIC_API_URL and rebuild this app.';
 
 function resolveApiUrl() {
+  if (!rawApiUrl) {
+    return '';
+  }
+
   const normalizedFromEnv = /^https?:\/\//.test(rawApiUrl) ? rawApiUrl : `http://${rawApiUrl}`;
   const parsed = new URL(normalizedFromEnv);
   const envHost = parsed.hostname.toLowerCase();
@@ -46,9 +52,16 @@ function resolveApiUrl() {
 const API_URL = resolveApiUrl();
 
 const api = axios.create({
-  baseURL: API_URL,
+  baseURL: API_URL || undefined,
   timeout: 10000,
 });
+
+if (!API_URL) {
+  console.error(`${LOG_PREFIX} API_URL_NOT_CONFIGURED`, {
+    configuredApiUrl,
+    hint: 'Set EXPO_PUBLIC_API_URL in EAS env for the active build profile and rebuild.',
+  });
+}
 
 type ActionType = 'register' | 'redbull' | 'dinner';
 type ScreenTab = 'scanner' | 'dashboard' | 'evaluation';
@@ -85,10 +98,9 @@ type EvaluationRow = {
   team_name: string;
   lab_no: string;
   participant_count: number;
-  innovation: number;
-  technical: number;
-  impact: number;
-  presentation: number;
+  evaluation_1: number;
+  evaluation_2: number;
+  final_presentation: number;
   total: number;
   remarks: string;
   evaluated: boolean;
@@ -191,12 +203,17 @@ export default function App() {
   const [evaluationError, setEvaluationError] = useState('');
   const [evaluationSearch, setEvaluationSearch] = useState('');
 
+  const [resultsUnlocked, setResultsUnlocked] = useState(false);
+  const [techPassphrase, setTechPassphrase] = useState('');
+  const [unlockInput, setUnlockInput] = useState('');
+  const [unlockLoading, setUnlockLoading] = useState(false);
+  const [unlockError, setUnlockError] = useState('');
+
   const [formTeamName, setFormTeamName] = useState('');
   const [formLabNo, setFormLabNo] = useState('');
-  const [formInnovation, setFormInnovation] = useState('0');
-  const [formTechnical, setFormTechnical] = useState('0');
-  const [formImpact, setFormImpact] = useState('0');
-  const [formPresentation, setFormPresentation] = useState('0');
+  const [formEvaluation1, setFormEvaluation1] = useState('0');
+  const [formEvaluation2, setFormEvaluation2] = useState('0');
+  const [formFinalPresentation, setFormFinalPresentation] = useState('0');
   const [formRemarks, setFormRemarks] = useState('');
 
   const showOverlay = useCallback((type: OverlayType, message: string, subMessage: string) => {
@@ -214,52 +231,93 @@ export default function App() {
 
   const hydrateEvaluationForm = useCallback((team: EvaluationRow) => {
     setFormTeamName(team.team_name);
-    setFormLabNo(team.lab_no || '');
-    setFormInnovation(String(team.innovation || 0));
-    setFormTechnical(String(team.technical || 0));
-    setFormImpact(String(team.impact || 0));
-    setFormPresentation(String(team.presentation || 0));
+    setFormLabNo(team.lab_no || '1000');
+    setFormEvaluation1(String(team.evaluation_1 || 0));
+    setFormEvaluation2(String(team.evaluation_2 || 0));
+    setFormFinalPresentation(String(team.final_presentation || 0));
     setFormRemarks(team.remarks || '');
   }, []);
 
-  const fetchDashboard = useCallback(async (showLoader: boolean) => {
-    if (showLoader) {
-      setDashboardLoading(true);
-    }
-
-    try {
-      const response = await api.get<DashboardResponse>('/dashboard');
-      setStats({
-        totalParticipants: response.data.totalParticipants,
-        registeredParticipants: response.data.registeredParticipants,
-        remainingParticipants: response.data.remainingParticipants,
-        dinnerTaken: response.data.dinnerTaken,
-        dinnerPending: response.data.dinnerPending,
-        totalTeams: response.data.totalTeams,
-        registeredTeams: response.data.registeredTeams,
-        remainingTeams: response.data.remainingTeams,
-      });
-      setTeams(response.data.teams || []);
-      setDashboardError('');
-    } catch (error: any) {
-      const message = getErrorMessage(error);
-      setDashboardError(message);
-      log('FETCH_DASHBOARD_FAIL', { message });
-    } finally {
-      if (showLoader) {
-        setDashboardLoading(false);
+  const getTechHeaders = useCallback(
+    (passphraseOverride?: string) => {
+      const value = String(passphraseOverride || techPassphrase || '').trim();
+      if (!value) {
+        return {};
       }
-    }
-  }, []);
+      return { 'x-tech-passphrase': value };
+    },
+    [techPassphrase]
+  );
+
+  const fetchDashboard = useCallback(
+    async (showLoader: boolean, passphraseOverride?: string) => {
+      if (!API_URL) {
+        setDashboardError(API_CONFIG_ERROR_MSG);
+        return;
+      }
+
+      const headers = getTechHeaders(passphraseOverride);
+      if (!headers['x-tech-passphrase']) {
+        return;
+      }
+
+      if (showLoader) {
+        setDashboardLoading(true);
+      }
+
+      try {
+        const response = await api.get<DashboardResponse>('/dashboard', { headers });
+        setStats({
+          totalParticipants: response.data.totalParticipants,
+          registeredParticipants: response.data.registeredParticipants,
+          remainingParticipants: response.data.remainingParticipants,
+          dinnerTaken: response.data.dinnerTaken,
+          dinnerPending: response.data.dinnerPending,
+          totalTeams: response.data.totalTeams,
+          registeredTeams: response.data.registeredTeams,
+          remainingTeams: response.data.remainingTeams,
+        });
+        setTeams(response.data.teams || []);
+        setDashboardError('');
+      } catch (error: any) {
+        const message = getErrorMessage(error);
+        if (error?.response?.status === 401) {
+          setResultsUnlocked(false);
+          setTechPassphrase('');
+          setUnlockError('Passphrase required for Results/Evaluation');
+          if (activeScreen !== 'scanner') {
+            setActiveScreen('scanner');
+          }
+        }
+        setDashboardError(message);
+        log('FETCH_DASHBOARD_FAIL', { message });
+      } finally {
+        if (showLoader) {
+          setDashboardLoading(false);
+        }
+      }
+    },
+    [activeScreen, getTechHeaders]
+  );
 
   const fetchEvaluations = useCallback(
-    async (showLoader: boolean) => {
+    async (showLoader: boolean, passphraseOverride?: string) => {
+      if (!API_URL) {
+        setEvaluationError(API_CONFIG_ERROR_MSG);
+        return;
+      }
+
+      const headers = getTechHeaders(passphraseOverride);
+      if (!headers['x-tech-passphrase']) {
+        return;
+      }
+
       if (showLoader) {
         setEvaluationLoading(true);
       }
 
       try {
-        const response = await api.get<EvaluationsResponse>('/evaluations');
+        const response = await api.get<EvaluationsResponse>('/evaluations', { headers });
         const nextEvaluations = response.data.evaluations || [];
         setEvaluations(nextEvaluations);
         setEvaluationError('');
@@ -269,6 +327,14 @@ export default function App() {
         }
       } catch (error: any) {
         const message = getErrorMessage(error);
+        if (error?.response?.status === 401) {
+          setResultsUnlocked(false);
+          setTechPassphrase('');
+          setUnlockError('Passphrase required for Results/Evaluation');
+          if (activeScreen !== 'scanner') {
+            setActiveScreen('scanner');
+          }
+        }
         setEvaluationError(message);
         log('FETCH_EVALUATIONS_FAIL', { message });
       } finally {
@@ -277,11 +343,20 @@ export default function App() {
         }
       }
     },
-    [formTeamName, hydrateEvaluationForm]
+    [activeScreen, formTeamName, getTechHeaders, hydrateEvaluationForm]
   );
 
   useEffect(() => {
-    log('APP_MOUNT', { rawApiUrl, resolvedApiUrl: API_URL });
+    log('APP_MOUNT', { rawApiUrl, resolvedApiUrl: API_URL, apiConfigured: Boolean(API_URL) });
+    return () => {
+      log('APP_UNMOUNT');
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!resultsUnlocked || !techPassphrase) {
+      return;
+    }
 
     void fetchDashboard(true);
     void fetchEvaluations(true);
@@ -297,15 +372,23 @@ export default function App() {
     return () => {
       clearInterval(dashboardTimer);
       clearInterval(evaluationTimer);
-      log('APP_UNMOUNT');
     };
-  }, [fetchDashboard, fetchEvaluations]);
+  }, [fetchDashboard, fetchEvaluations, resultsUnlocked, techPassphrase]);
 
   const handleAction = useCallback(
     async (mobile: string, source: 'scan' | 'manual') => {
       const normalizedMobile = mobile.trim().replace(/\.0$/, '');
 
       if (!normalizedMobile) {
+        if (source === 'scan') {
+          setScanned(false);
+          scanLockRef.current = false;
+        }
+        return;
+      }
+
+      if (!API_URL) {
+        showOverlay('error', 'API Not Configured', API_CONFIG_ERROR_MSG);
         if (source === 'scan') {
           setScanned(false);
           scanLockRef.current = false;
@@ -322,7 +405,7 @@ export default function App() {
         });
 
         const teamName = String(response.data?.team_name || 'Team N/A');
-        const labNo = String(response.data?.lab_no || 'N/A');
+        const labNo = String(response.data?.lab_no || '1000');
         const name = String(response.data?.name || '');
 
         const statusMessage =
@@ -344,13 +427,15 @@ export default function App() {
           setMobileNum('');
         }
 
-        void fetchDashboard(false);
+        if (resultsUnlocked) {
+          void fetchDashboard(false);
+        }
       } catch (error: any) {
         const message = getErrorMessage(error);
         showOverlay('error', 'Action Failed', message);
       }
     },
-    [activeAction, fetchDashboard, showOverlay]
+    [activeAction, fetchDashboard, resultsUnlocked, showOverlay]
   );
 
   const onBarcodeScanned = useCallback(
@@ -366,9 +451,47 @@ export default function App() {
     [handleAction, overlayVisible, scanned]
   );
 
+  const unlockProtectedScreens = useCallback(async () => {
+    if (!API_URL) {
+      setUnlockError(API_CONFIG_ERROR_MSG);
+      return;
+    }
+
+    const passphrase = unlockInput.trim();
+    if (!passphrase) {
+      setUnlockError('Enter passphrase first');
+      return;
+    }
+
+    setUnlockLoading(true);
+    try {
+      await api.post('/tech/unlock', { passphrase });
+      setTechPassphrase(passphrase);
+      setResultsUnlocked(true);
+      setUnlockError('');
+      setDashboardError('');
+      setEvaluationError('');
+    } catch (error: any) {
+      setUnlockError(getErrorMessage(error));
+    } finally {
+      setUnlockLoading(false);
+    }
+  }, [unlockInput]);
+
   const openExport = useCallback(
     async (path: string) => {
-      const url = `${API_URL}${path}`;
+      if (!API_URL) {
+        showOverlay('error', 'API Not Configured', API_CONFIG_ERROR_MSG);
+        return;
+      }
+
+      if (!techPassphrase) {
+        showOverlay('error', 'Locked', 'Unlock Results/Evaluation first');
+        return;
+      }
+
+      const delimiter = path.includes('?') ? '&' : '?';
+      const url = `${API_URL}${path}${delimiter}passphrase=${encodeURIComponent(techPassphrase)}`;
       try {
         await Linking.openURL(url);
         showOverlay('success', 'Export Opened', url);
@@ -376,7 +499,7 @@ export default function App() {
         showOverlay('error', 'Export Failed', `Open manually: ${url}`);
       }
     },
-    [showOverlay]
+    [showOverlay, techPassphrase]
   );
 
   const filteredEvaluations = useMemo(() => {
@@ -404,55 +527,96 @@ export default function App() {
 
   const liveTotal = useMemo(
     () =>
-      toScoreValue(formInnovation) +
-      toScoreValue(formTechnical) +
-      toScoreValue(formImpact) +
-      toScoreValue(formPresentation),
-    [formImpact, formInnovation, formPresentation, formTechnical]
+      toScoreValue(formEvaluation1) + toScoreValue(formEvaluation2) + toScoreValue(formFinalPresentation),
+    [formEvaluation1, formEvaluation2, formFinalPresentation]
   );
 
   const saveEvaluation = useCallback(async () => {
+    if (!API_URL) {
+      showOverlay('error', 'API Not Configured', API_CONFIG_ERROR_MSG);
+      return;
+    }
+
     if (!formTeamName) {
       showOverlay('error', 'No Team Selected', 'Select a team before saving evaluation');
       return;
     }
 
-    try {
-      await api.post('/evaluations', {
-        team_name: formTeamName,
-        lab_no: formLabNo,
-        innovation: toScoreValue(formInnovation),
-        technical: toScoreValue(formTechnical),
-        impact: toScoreValue(formImpact),
-        presentation: toScoreValue(formPresentation),
-        remarks: formRemarks,
-      });
+    const headers = getTechHeaders();
+    if (!headers['x-tech-passphrase']) {
+      showOverlay('error', 'Locked', 'Unlock Results/Evaluation first');
+      return;
+    }
 
-      showOverlay('success', 'Evaluation Saved', `${formTeamName} | Lab: ${formLabNo || 'N/A'}`);
+    try {
+      await api.post(
+        '/evaluations',
+        {
+          team_name: formTeamName,
+          lab_no: formLabNo,
+          evaluation_1: toScoreValue(formEvaluation1),
+          evaluation_2: toScoreValue(formEvaluation2),
+          final_presentation: toScoreValue(formFinalPresentation),
+          remarks: formRemarks,
+        },
+        { headers }
+      );
+
+      showOverlay('success', 'Evaluation Saved', `${formTeamName} | Lab: ${formLabNo || '1000'}`);
       void fetchEvaluations(false);
     } catch (error: any) {
       showOverlay('error', 'Save Failed', getErrorMessage(error));
     }
   }, [
     fetchEvaluations,
-    formImpact,
-    formInnovation,
+    formEvaluation1,
+    formEvaluation2,
+    formFinalPresentation,
     formLabNo,
-    formPresentation,
     formRemarks,
     formTeamName,
-    formTechnical,
+    getTechHeaders,
     showOverlay,
   ]);
+
+  const renderProtectedLock = () => (
+    <View style={styles.lockCard}>
+      <Text style={styles.lockTitle}>Tech Team Unlock</Text>
+      <Text style={styles.lockBody}>
+        Results and Evaluation are password-protected for tech team members only.
+      </Text>
+      <TextInput
+        style={styles.input}
+        value={unlockInput}
+        onChangeText={setUnlockInput}
+        placeholder="Enter tech passphrase"
+        secureTextEntry
+        autoCapitalize="none"
+        autoCorrect={false}
+      />
+      {unlockError ? <Text style={styles.errorText}>{unlockError}</Text> : null}
+      <TouchableOpacity
+        style={[styles.primaryButton, unlockLoading && styles.primaryButtonDisabled]}
+        onPress={() => void unlockProtectedScreens()}
+        disabled={unlockLoading}
+      >
+        <Text style={styles.primaryButtonText}>{unlockLoading ? 'Unlocking...' : 'Unlock'}</Text>
+      </TouchableOpacity>
+    </View>
+  );
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Hackathon Live Console</Text>
-        <Text style={styles.headerSubtitle}>
-          Teams {stats.registeredTeams}/{stats.totalTeams} | Participants {stats.registeredParticipants}/
-          {stats.totalParticipants} | Dinner {stats.dinnerTaken}/{stats.totalParticipants}
-        </Text>
+        {resultsUnlocked ? (
+          <Text style={styles.headerSubtitle}>
+            Teams {stats.registeredTeams}/{stats.totalTeams} | Participants {stats.registeredParticipants}/
+            {stats.totalParticipants} | Dinner {stats.dinnerTaken}/{stats.totalParticipants}
+          </Text>
+        ) : (
+          <Text style={styles.headerSubtitle}>Results and Evaluation are currently locked.</Text>
+        )}
       </View>
 
       <View style={styles.screenTabsRow}>
@@ -520,14 +684,15 @@ export default function App() {
             </View>
 
             <Text style={styles.noteText}>
-              Register is idempotent. Dinner stays one-time only and will reject duplicate claims.
+              Register is idempotent and always marks user present with lab number. Dinner stays one-time only.
             </Text>
           </View>
         </View>
       )}
 
-      {activeScreen === 'dashboard' && (
-        <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
+      {activeScreen === 'dashboard' &&
+        (resultsUnlocked ? (
+          <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
           {dashboardLoading && teams.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
           {dashboardError ? <Text style={styles.errorText}>Dashboard error: {dashboardError}</Text> : null}
 
@@ -626,11 +791,14 @@ export default function App() {
               </Text>
             </View>
           ))}
-        </ScrollView>
-      )}
+          </ScrollView>
+        ) : (
+          <View style={styles.screenBody}>{renderProtectedLock()}</View>
+        ))}
 
-      {activeScreen === 'evaluation' && (
-        <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
+      {activeScreen === 'evaluation' &&
+        (resultsUnlocked ? (
+          <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
           {evaluationLoading && evaluations.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
           {evaluationError ? <Text style={styles.errorText}>Evaluation error: {evaluationError}</Text> : null}
 
@@ -675,36 +843,28 @@ export default function App() {
               <Text style={styles.evalFormTitle}>{formTeamName}</Text>
               <Text style={styles.evalFormSubtitle}>Lab {formLabNo || 'N/A'}</Text>
 
-              <Text style={styles.fieldLabel}>Innovation</Text>
+              <Text style={styles.fieldLabel}>Evaluation 1</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="decimal-pad"
-                value={formInnovation}
-                onChangeText={setFormInnovation}
+                value={formEvaluation1}
+                onChangeText={setFormEvaluation1}
               />
 
-              <Text style={styles.fieldLabel}>Technical</Text>
+              <Text style={styles.fieldLabel}>Evaluation 2</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="decimal-pad"
-                value={formTechnical}
-                onChangeText={setFormTechnical}
+                value={formEvaluation2}
+                onChangeText={setFormEvaluation2}
               />
 
-              <Text style={styles.fieldLabel}>Impact</Text>
+              <Text style={styles.fieldLabel}>Final Presentation</Text>
               <TextInput
                 style={styles.input}
                 keyboardType="decimal-pad"
-                value={formImpact}
-                onChangeText={setFormImpact}
-              />
-
-              <Text style={styles.fieldLabel}>Presentation</Text>
-              <TextInput
-                style={styles.input}
-                keyboardType="decimal-pad"
-                value={formPresentation}
-                onChangeText={setFormPresentation}
+                value={formFinalPresentation}
+                onChangeText={setFormFinalPresentation}
               />
 
               <Text style={styles.fieldLabel}>Remarks</Text>
@@ -723,8 +883,10 @@ export default function App() {
           ) : (
             <Text style={styles.noteText}>No team found. Check your registration import data.</Text>
           )}
-        </ScrollView>
-      )}
+          </ScrollView>
+        ) : (
+          <View style={styles.screenBody}>{renderProtectedLock()}</View>
+        ))}
 
       <Modal visible={overlayVisible} transparent animationType="fade">
         <View style={[styles.overlay, overlayType === 'success' ? styles.overlaySuccess : styles.overlayError]}>
@@ -859,6 +1021,26 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: 32,
   },
+  lockCard: {
+    margin: 12,
+    padding: 16,
+    borderRadius: 12,
+    backgroundColor: '#1e1e1e',
+    borderWidth: 1,
+    borderColor: '#3a3a3a',
+  },
+  lockTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+  },
+  lockBody: {
+    color: '#c9c9c9',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 8,
+    marginBottom: 10,
+  },
   metricGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -900,6 +1082,9 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     paddingHorizontal: 16,
+  },
+  primaryButtonDisabled: {
+    opacity: 0.6,
   },
   searchButton: {
     marginLeft: 8,

@@ -18,20 +18,20 @@ def _normalize_header(header: str) -> str:
     return re.sub(r"[^a-z0-9]", "", str(header).lower())
 
 
-def _resolve_header(fieldnames: List[str], aliases: List[str]) -> Optional[str]:
-    normalized = {_normalize_header(name): name for name in fieldnames if name}
-    for alias in aliases:
-        match = normalized.get(_normalize_header(alias))
-        if match:
-            return match
-    return None
-
-
 def _normalize_mobile(raw_mobile: str) -> str:
     mobile = str(raw_mobile).strip()
     if mobile.endswith(".0"):
         mobile = mobile[:-2]
     return re.sub(r"\s+", "", mobile)
+
+
+def _slugify_team(raw_team: str) -> str:
+    team = str(raw_team or "").strip().lower()
+    if not team:
+        return "unassigned_team"
+    cleaned = re.sub(r"[^a-z0-9]+", "_", team)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    return cleaned or "unassigned_team"
 
 
 def _pick_input_path(user_path: Optional[str]) -> str:
@@ -49,11 +49,77 @@ def _pick_input_path(user_path: Optional[str]) -> str:
         return csv_candidates[0]
 
     print("Input file not found.")
-    print("Use: python3 generate_qr_codes.py --input <participants.csv|participants.xlsx>")
+    print("Use: python3 scripts/generate_qr_codes.py --input <participants.csv|participants.xlsx>")
     sys.exit(1)
 
 
-def _load_rows(input_path: str) -> List[Dict[str, str]]:
+def _is_mobile_header(normalized_header: str) -> bool:
+    return (
+        "mobile" in normalized_header
+        or normalized_header in {"phone", "phonenumber", "contactnumber"}
+        or normalized_header.endswith("whatsappnumber")
+    )
+
+
+def _is_name_header(normalized_header: str) -> bool:
+    if normalized_header in {"teamname", "college", "course"}:
+        return False
+    return "name" in normalized_header
+
+
+def _extract_records_from_matrix(headers: List[str], rows: List[List[str]]) -> List[Dict[str, str]]:
+    normalized_headers = [_normalize_header(header) for header in headers]
+
+    team_index = next(
+        (index for index, header in enumerate(normalized_headers) if header in {"teamname", "team"}),
+        None,
+    )
+    lab_index = next(
+        (index for index, header in enumerate(normalized_headers) if header in {"labno", "labnumber", "lab"}),
+        None,
+    )
+
+    mobile_indices = [index for index, header in enumerate(normalized_headers) if _is_mobile_header(header)]
+    name_indices = [index for index, header in enumerate(normalized_headers) if _is_name_header(header)]
+
+    # Map each mobile column to the nearest name column on its left.
+    mobile_to_name: Dict[int, Optional[int]] = {}
+    for mobile_idx in mobile_indices:
+        closest_name_idx = None
+        for name_idx in name_indices:
+            if name_idx < mobile_idx:
+                closest_name_idx = name_idx
+            else:
+                break
+        mobile_to_name[mobile_idx] = closest_name_idx
+
+    records: List[Dict[str, str]] = []
+    for raw_row in rows:
+        row = raw_row + [""] * max(0, len(headers) - len(raw_row))
+        team_name = row[team_index].strip() if team_index is not None else ""
+        lab_no = row[lab_index].strip() if lab_index is not None else ""
+
+        for mobile_idx in mobile_indices:
+            mobile = _normalize_mobile(row[mobile_idx])
+            if not mobile:
+                continue
+
+            name_idx = mobile_to_name.get(mobile_idx)
+            name = row[name_idx].strip() if name_idx is not None else ""
+
+            records.append(
+                {
+                    "mobile": mobile,
+                    "name": name,
+                    "team_name": team_name,
+                    "lab_no": lab_no,
+                }
+            )
+
+    return records
+
+
+def _load_participant_records(input_path: str) -> List[Dict[str, str]]:
     lower = input_path.lower()
     if lower.endswith(".xlsx") or lower.endswith(".xls"):
         try:
@@ -65,21 +131,30 @@ def _load_rows(input_path: str) -> List[Dict[str, str]]:
 
         try:
             df = pd.read_excel(input_path, dtype=str).fillna("")
-            return df.to_dict(orient="records")
+            headers = [str(col) for col in df.columns.tolist()]
+            rows = df.values.tolist()
+            return _extract_records_from_matrix(headers, rows)
         except Exception as exc:
             print(f"Failed to read Excel file {input_path}: {exc}")
             sys.exit(1)
 
     try:
         with open(input_path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            return list(reader)
+            reader = csv.reader(f)
+            all_rows = list(reader)
     except FileNotFoundError:
         print(f"Input file not found: {input_path}")
         sys.exit(1)
     except Exception as exc:
         print(f"Failed to read CSV file {input_path}: {exc}")
         sys.exit(1)
+
+    if not all_rows:
+        return []
+
+    headers = all_rows[0]
+    rows = all_rows[1:]
+    return _extract_records_from_matrix(headers, rows)
 
 
 def _generate_qr_image(data: str, output_path: str, box_size: int, border: int) -> None:
@@ -108,26 +183,16 @@ def main() -> None:
     args = parser.parse_args()
 
     input_path = _pick_input_path(args.input)
-    rows = _load_rows(input_path)
+    records = _load_participant_records(input_path)
 
-    if not rows:
-        print(f"No rows found in {input_path}.")
+    if not records:
+        print(f"No participant rows found in {input_path}.")
         return
-
-    fieldnames = list(rows[0].keys())
-    mobile_key = _resolve_header(fieldnames, ["Candidate's Mobile", "Mobile", "Phone", "Phone Number"])
-    name_key = _resolve_header(fieldnames, ["Candidate's Name", "Name"])
-    team_key = _resolve_header(fieldnames, ["Team Name", "Team"])
-
-    if not mobile_key:
-        print("Missing mobile column. Expected one of: Candidate's Mobile, Mobile, Phone Number")
-        sys.exit(1)
 
     os.makedirs(args.output_dir, exist_ok=True)
     manifest_path = os.path.join(args.output_dir, args.manifest)
 
     generated = 0
-    skipped_missing_mobile = 0
     skipped_existing = 0
     skipped_duplicates = 0
     seen_mobiles = set()
@@ -135,23 +200,25 @@ def main() -> None:
     with open(manifest_path, "w", encoding="utf-8", newline="") as manifest_file:
         writer = csv.DictWriter(
             manifest_file,
-            fieldnames=["mobile", "name", "team_name", "qr_file"],
+            fieldnames=["mobile", "name", "team_name", "team_dir", "qr_file", "qr_relative_path", "lab_no"],
         )
         writer.writeheader()
 
-        for row in rows:
-            mobile = _normalize_mobile(row.get(mobile_key, ""))
-            if not mobile:
-                skipped_missing_mobile += 1
-                continue
-
+        for record in records:
+            mobile = record["mobile"]
             if mobile in seen_mobiles:
                 skipped_duplicates += 1
                 continue
             seen_mobiles.add(mobile)
 
+            team_name = record.get("team_name", "")
+            team_dir_name = _slugify_team(team_name)
+            team_dir_path = os.path.join(args.output_dir, team_dir_name)
+            os.makedirs(team_dir_path, exist_ok=True)
+
             qr_filename = f"{mobile}.png"
-            qr_path = os.path.join(args.output_dir, qr_filename)
+            qr_path = os.path.join(team_dir_path, qr_filename)
+            qr_relative_path = os.path.join(team_dir_name, qr_filename)
 
             if os.path.exists(qr_path) and not args.overwrite:
                 skipped_existing += 1
@@ -162,9 +229,12 @@ def main() -> None:
             writer.writerow(
                 {
                     "mobile": mobile,
-                    "name": row.get(name_key, "").strip() if name_key else "",
-                    "team_name": row.get(team_key, "").strip() if team_key else "",
+                    "name": record.get("name", "").strip(),
+                    "team_name": team_name,
+                    "team_dir": team_dir_name,
                     "qr_file": qr_filename,
+                    "qr_relative_path": qr_relative_path,
+                    "lab_no": record.get("lab_no", "").strip(),
                 }
             )
 
@@ -172,9 +242,9 @@ def main() -> None:
     print(f"Output directory: {args.output_dir}")
     print(f"Manifest: {manifest_path}")
     print(f"Generated: {generated}")
-    print(f"Skipped (missing mobile): {skipped_missing_mobile}")
     print(f"Skipped (duplicate mobiles in input): {skipped_duplicates}")
     print(f"Skipped (existing files): {skipped_existing}")
+    print(f"Unique participant mobiles processed: {len(seen_mobiles)}")
 
 
 if __name__ == "__main__":

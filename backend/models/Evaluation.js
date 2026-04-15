@@ -3,11 +3,10 @@ const mongoose = require('mongoose');
 const evaluationSchema = new mongoose.Schema(
   {
     team_name: { type: String, required: true, trim: true },
-    lab_no: { type: String, default: '', trim: true },
-    innovation: { type: Number, default: 0, min: 0 },
-    technical: { type: Number, default: 0, min: 0 },
-    impact: { type: Number, default: 0, min: 0 },
-    presentation: { type: Number, default: 0, min: 0 },
+    lab_no: { type: String, default: '1000', trim: true },
+    evaluation_1: { type: Number, default: 0, min: 0 },
+    evaluation_2: { type: Number, default: 0, min: 0 },
+    final_presentation: { type: Number, default: 0, min: 0 },
     total: { type: Number, default: 0, min: 0 },
     remarks: { type: String, default: '', trim: true },
     evaluated_at: { type: Date, default: Date.now },
