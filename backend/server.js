@@ -363,7 +363,33 @@ mongoose.connection.on('connected', () => log('MONGO_CONNECTED'));
 mongoose.connection.on('error', (err) => logError('MONGO_ERROR', err));
 mongoose.connection.on('disconnected', () => log('MONGO_DISCONNECTED'));
 
-mongoose.connect(MONGO_URI).catch((err) => logError('MONGO_CONNECT_FAILED', err));
+// 1. Define Mongo Options with increased Pool Size
+const mongoOptions = {
+  maxPoolSize: 20,             // Increase from default 10 to 50
+  minPoolSize: 10,             // Keep 10 connections warm
+  socketTimeoutMS: 45000,      // Close sockets after 45s of inactivity
+  serverSelectionTimeoutMS: 5000,
+};
+
+// mongoose.connect(MONGO_URI).catch((err) => logError('MONGO_CONNECT_FAILED', err));
+mongoose.connect(MONGO_URI, mongoOptions)
+.then(() => log('MONGO_CONNECTED_WITH_POOL_SIZE_50'))
+.catch((err) => logError('MONGO_CONNECT_FAILED', err));
+
+
+const RENDER_EXTERNAL_URL = `https://hackathonorganizationapp.onrender.com/health`;
+
+if (process.env.NODE_ENV === 'production') {
+  setInterval(() => {
+    // We use a dynamic import or require to avoid overhead
+    const http = RENDER_EXTERNAL_URL.startsWith('https') ? require('https') : require('http');
+    http.get(RENDER_EXTERNAL_URL, (res) => {
+      log('SELF_PING_SUCCESS', { statusCode: res.statusCode });
+    }).on('error', (err) => {
+      logError('SELF_PING_ERROR', err);
+    });
+  }, 14 * 60 * 1000); // Ping every 14 minutes
+}
 
 app.use((req, res, next) => {
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -695,6 +721,15 @@ app.get('/exports/evaluations', requireTechAccess, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
+
+// app.listen(PORT, HOST, () => {
+//   log('SERVER_LISTENING', {
+//     host: HOST,
+//     port: PORT,
+//     localhostUrl: `http://127.0.0.1:${PORT}`,
+//     networkUrls: getNetworkUrls(),
+//   });
+// });
 
 app.listen(PORT, HOST, () => {
   log('SERVER_LISTENING', {
