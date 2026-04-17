@@ -52,7 +52,28 @@ def _normalize_mobile(raw_mobile: str) -> str:
 
 
 def _connect():
-    mongo_uri = os.getenv("MONGO_URI", "mongodb://127.0.0.1:27017/")
+    mongo_uri = os.getenv("MONGO_URI")
+    if not mongo_uri:
+        # Convenience: allow running from repo root without manually exporting env vars.
+        # If backend/.env exists and defines MONGO_URI, use it; otherwise fall back to local MongoDB.
+        backend_env_path = os.path.join(os.path.dirname(__file__), "..", "backend", ".env")
+        backend_env_path = os.path.abspath(backend_env_path)
+        if os.path.exists(backend_env_path):
+            try:
+                with open(backend_env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        raw = line.strip()
+                        if not raw or raw.startswith("#") or "=" not in raw:
+                            continue
+                        key, value = raw.split("=", 1)
+                        if key.strip() == "MONGO_URI":
+                            mongo_uri = value.strip().strip('"').strip("'")
+                            break
+            except Exception:
+                # Ignore .env parsing errors; fallback handled below.
+                pass
+
+    mongo_uri = mongo_uri or "mongodb://127.0.0.1:27017/"
     client = pymongo.MongoClient(mongo_uri, serverSelectionTimeoutMS=5000)
     try:
         client.admin.command("ping")
@@ -218,7 +239,8 @@ def import_records(records: List[Dict[str, str]], collection):
 if __name__ == "__main__":
     input_path = _pick_input_path()
     client = _connect()
-    db = client["hackathon"]
+    # db = client["hackathon"]
+    db = client["test"]  # Use "test" database for safety during development; change to "hackathon" for production
     collection = db["participants"]
     collection.create_index("mobile", unique=True)
 
