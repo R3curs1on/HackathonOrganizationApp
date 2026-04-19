@@ -83,14 +83,12 @@ def _connect():
         sys.exit(1)
     return client
 
-
 def _is_mobile_header(normalized_header: str) -> bool:
     return (
         "mobile" in normalized_header
         or normalized_header in {"phone", "phonenumber", "contactnumber"}
         or normalized_header.endswith("whatsappnumber")
     )
-
 
 def _is_name_header(normalized_header: str) -> bool:
     if normalized_header in {"teamname", "college", "course"}:
@@ -238,11 +236,20 @@ def import_records(records: List[Dict[str, str]], collection):
 
 if __name__ == "__main__":
     input_path = _pick_input_path()
+
+
     client = _connect()
     # db = client["hackathon"]
     db = client["test"]  # Use "test" database for safety during development; change to "hackathon" for production
     collection = db["participants"]
-    collection.create_index("mobile", unique=True)
+
+
+
+    # 2. Clear existing data to ensure a fresh state
+    print("Clearing existing records...")
+    collection.delete_many({}) 
 
     parsed_records = _load_records(input_path)
+
+    collection.create_index("mobile", unique=True)
     import_records(parsed_records, collection)
