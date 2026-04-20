@@ -46,7 +46,7 @@ Use local MongoDB (default expected URI: `mongodb://127.0.0.1:27017/`).
 ### 2) Import participants CSV
 ```bash
 python3 -m pip install pymongo
-python3 scripts/import_data.py "Breaking Enigma 4.0 – Payment Confirmation Form  (Responses) - Form Responses 1.csv"
+python3 scripts/import_data.py "Breaking_Enigma_Form_Responses.csv"
 ```
 
 Notes:
@@ -56,7 +56,7 @@ Notes:
 ### 3) Generate team-wise QR codes
 ```bash
 python3 -m pip install "qrcode[pil]" pandas openpyxl
-python3 scripts/generate_qr_codes.py --input "Breaking Enigma 4.0 – Payment Confirmation Form  (Responses) - Form Responses 1.csv" --output-dir qr_codes --overwrite
+python3 scripts/generate_qr_codes.py --input "Breaking_Enigma_Form_Responses.csv" --output-dir qr_codes --overwrite
 ```
 
 ### 4) Optional fake test participants (10)
@@ -104,14 +104,14 @@ Why local fails for cloud APK builds:
 
 After deploy, verify:
 ```bash
-curl https://<your-backend-domain>/health
+curl https://<https://hackathonorganizationapp.onrender.com>/health
 ```
 
 ### 3) Set EAS environment variable for frontend builds
 From `frontend/`:
 ```bash
-eas env:create --name EXPO_PUBLIC_API_URL --value https://<your-backend-domain> --environment preview --visibility plaintext
-eas env:create --name EXPO_PUBLIC_API_URL --value https://<your-backend-domain> --environment production --visibility plaintext
+eas env:create --name EXPO_PUBLIC_API_URL --value https://<https://hackathonorganizationapp.onrender.com> --environment preview --visibility plaintext
+eas env:create --name EXPO_PUBLIC_API_URL --value https://<https://hackathonorganizationapp.onrender.com> --environment production --visibility plaintext
 ```
 
 ### 4) Build a new Android APK
