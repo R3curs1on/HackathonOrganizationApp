@@ -8,6 +8,12 @@ qr_codes/
 !.env.example
 !.env.*.example
 
+
+.venv/
+venv/
+env/
+
+
 # Python cache
 __pycache__/
 *.py[cod]
