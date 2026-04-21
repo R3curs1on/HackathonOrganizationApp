@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   Linking,
   Modal,
   ScrollView,
@@ -50,6 +51,12 @@ function resolveApiUrl() {
 }
 
 const API_URL = resolveApiUrl();
+
+const ASSETS = {
+  acmLogo: require('../assets/images/acm-vit-logo.jpg'),
+  throne: require('../assets/images/throne.jpeg'),
+  mainThemeAlt: require('../assets/images/main theme 2 .png'),
+};
 
 const api = axios.create({
   baseURL: API_URL || undefined,
@@ -531,6 +538,33 @@ export default function App() {
     [formEvaluation1, formEvaluation2, formFinalPresentation]
   );
 
+  const renderBrandCard = useCallback(
+    (subtitle: string) => (
+      <View style={styles.brandCard}>
+        <Image source={ASSETS.acmLogo} style={styles.brandLogo} resizeMode="contain" />
+        <View style={styles.brandCopy}>
+          <Text style={styles.brandEyebrow}>ACM VIT </Text>
+          <Text style={styles.brandTitle}>Breaking Enigma 4.0 Live</Text>
+          <Text style={styles.brandSubtitle}>{subtitle}</Text>
+        </View>
+      </View>
+    ),
+    []
+  );
+
+  const renderMediaState = useCallback(
+    (source: number, title: string, body: string) => (
+      <View style={styles.mediaStateCard}>
+        <Image source={source} style={styles.mediaStateArt} resizeMode="cover" />
+        <View style={styles.mediaStateCopy}>
+          <Text style={styles.mediaStateTitle}>{title}</Text>
+          <Text style={styles.mediaStateBody}>{body}</Text>
+        </View>
+      </View>
+    ),
+    []
+  );
+
   const saveEvaluation = useCallback(async () => {
     if (!API_URL) {
       showOverlay('error', 'API Not Configured', API_CONFIG_ERROR_MSG);
@@ -608,14 +642,10 @@ export default function App() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Hackathon Live Console</Text>
-        {resultsUnlocked ? (
-          <Text style={styles.headerSubtitle}>
-            Teams {stats.registeredTeams}/{stats.totalTeams} | Participants {stats.registeredParticipants}/
-            {stats.totalParticipants} | Dinner {stats.dinnerTaken}/{stats.totalParticipants}
-          </Text>
-        ) : (
-          <Text style={styles.headerSubtitle}>Results and Evaluation are currently locked.</Text>
+        {renderBrandCard(
+          resultsUnlocked
+            ? `Teams ${stats.registeredTeams}/${stats.totalTeams} | Participants ${stats.registeredParticipants}/${stats.totalParticipants} | Dinner ${stats.dinnerTaken}/${stats.totalParticipants}`
+            : 'Results and evaluation are locked until a tech passphrase is entered.'
         )}
       </View>
 
@@ -634,7 +664,7 @@ export default function App() {
       </View>
 
       {activeScreen === 'scanner' && (
-        <View style={styles.screenBody}>
+        <ScrollView style={styles.screenBody} contentContainerStyle={styles.screenScrollContent}>
           <View style={styles.cameraPanel}>
             {permission?.granted ? (
               <CameraView
@@ -684,16 +714,25 @@ export default function App() {
             </View>
 
             <Text style={styles.noteText}>
-              Register is idempotent and always marks user present with lab number. Dinner stays one-time only.
+               Use Register to mark registrationa and get lab number. Use Redbull and Dinner for one time Meal.
             </Text>
           </View>
-        </View>
+        </ScrollView>
       )}
 
       {activeScreen === 'dashboard' &&
         (resultsUnlocked ? (
           <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
-          {dashboardLoading && teams.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
+          {dashboardLoading && teams.length === 0 ? (
+            <>
+              {renderMediaState(
+                ASSETS.throne,
+                'Dashboard loading state',
+                'Use this view to monitor teams, participants, and exports. The artwork only appears while the dashboard is fetching data.'
+              )}
+              <ActivityIndicator size="large" color="#f1c40f" />
+            </>
+          ) : null}
           {dashboardError ? <Text style={styles.errorText}>Dashboard error: {dashboardError}</Text> : null}
 
           <View style={styles.metricGrid}>
@@ -799,7 +838,16 @@ export default function App() {
       {activeScreen === 'evaluation' &&
         (resultsUnlocked ? (
           <ScrollView style={styles.screenBody} contentContainerStyle={styles.dashboardContent}>
-          {evaluationLoading && evaluations.length === 0 && <ActivityIndicator size="large" color="#f1c40f" />}
+          {evaluationLoading && evaluations.length === 0 ? (
+            <>
+              {renderMediaState(
+                ASSETS.mainThemeAlt,
+                'Evaluation loading state',
+                'Search, review, and score teams here. The image stays compact so it supports the workflow instead of competing with it.'
+              )}
+              <ActivityIndicator size="large" color="#f1c40f" />
+            </>
+          ) : null}
           {evaluationError ? <Text style={styles.errorText}>Evaluation error: {evaluationError}</Text> : null}
 
           <Text style={styles.sectionTitle}>Evaluation Exports</Text>
@@ -901,56 +949,93 @@ export default function App() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#111',
+    backgroundColor: '#0a0d14',
   },
   header: {
-    paddingTop: 56,
-    paddingBottom: 14,
-    paddingHorizontal: 16,
-    backgroundColor: '#1e1e1e',
+    paddingTop: 12,
+    paddingHorizontal: 12,
+    paddingBottom: 6,
+    backgroundColor: '#0a0d14',
   },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 21,
+  brandCard: {
+    minHeight: 96,
+    borderRadius: 18,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    backgroundColor: '#131a28',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  brandLogo: {
+    width: 54,
+    height: 54,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255, 255, 255, 0.96)',
+    marginRight: 12,
+  },
+  brandCopy: {
+    flex: 1,
+  },
+  brandEyebrow: {
+    color: '#f5d36a',
+    fontSize: 10,
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
     fontWeight: '800',
   },
-  headerSubtitle: {
-    color: '#d4d4d4',
-    marginTop: 6,
-    fontSize: 13,
+  brandTitle: {
+    color: '#fff',
+    fontSize: 19,
+    lineHeight: 23,
+    fontWeight: '900',
+    marginTop: 2,
+  },
+  brandSubtitle: {
+    color: '#d8e0ef',
+    marginTop: 5,
+    fontSize: 12,
+    lineHeight: 17,
   },
   screenTabsRow: {
     flexDirection: 'row',
     paddingHorizontal: 8,
     paddingVertical: 8,
-    backgroundColor: '#202020',
+    backgroundColor: '#101522',
   },
   screenTabBtn: {
     flex: 1,
     marginHorizontal: 4,
-    backgroundColor: '#343434',
-    borderRadius: 8,
+    backgroundColor: '#1b2333',
+    borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
     height: 42,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   screenTabBtnActive: {
-    backgroundColor: '#f1c40f',
+    backgroundColor: '#f5c84c',
   },
   screenTabText: {
-    color: '#c5c5c5',
+    color: '#c8d0de',
     fontWeight: '700',
     fontSize: 12,
   },
   screenTabTextActive: {
-    color: '#111',
+    color: '#111827',
   },
   screenBody: {
     flex: 1,
   },
+  screenScrollContent: {
+    padding: 12,
+    paddingBottom: 28,
+  },
   cameraPanel: {
     height: 320,
-    margin: 12,
+    marginHorizontal: 12,
     borderRadius: 12,
     overflow: 'hidden',
     backgroundColor: '#000',
@@ -960,19 +1045,21 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     padding: 20,
-    backgroundColor: '#252525',
+    backgroundColor: '#121827',
   },
   permissionText: {
-    color: '#ddd',
+    color: '#e4e8f1',
     textAlign: 'center',
     marginBottom: 16,
   },
   controlsContainer: {
-    backgroundColor: '#1e1e1e',
+    backgroundColor: '#121827',
     padding: 16,
     marginHorizontal: 12,
     marginBottom: 12,
-    borderRadius: 12,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   searchRow: {
     flexDirection: 'row',
@@ -980,8 +1067,8 @@ const styles = StyleSheet.create({
   },
   input: {
     flex: 1,
-    backgroundColor: '#fff',
-    borderRadius: 8,
+    backgroundColor: '#edf2f8',
+    borderRadius: 10,
     paddingHorizontal: 12,
     height: 44,
     marginVertical: 6,
@@ -996,23 +1083,23 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: '#4a4a4a',
+    backgroundColor: '#21293a',
     marginHorizontal: 4,
-    borderRadius: 8,
+    borderRadius: 12,
   },
   activeTabBtn: {
-    backgroundColor: '#f1c40f',
+    backgroundColor: '#f5c84c',
   },
   tabText: {
-    color: '#d0d0d0',
+    color: '#d7deea',
     fontWeight: '700',
     fontSize: 12,
   },
   activeTabText: {
-    color: '#111',
+    color: '#111827',
   },
   noteText: {
-    color: '#c5c5c5',
+    color: '#d8e0ef',
     marginTop: 12,
     fontSize: 12,
     lineHeight: 17,
@@ -1021,13 +1108,45 @@ const styles = StyleSheet.create({
     padding: 12,
     paddingBottom: 32,
   },
-  lockCard: {
-    margin: 12,
-    padding: 16,
-    borderRadius: 12,
-    backgroundColor: '#1e1e1e',
+  mediaStateCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 12,
+    marginBottom: 12,
+    borderRadius: 16,
+    backgroundColor: '#121827',
     borderWidth: 1,
-    borderColor: '#3a3a3a',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  mediaStateArt: {
+    width: 72,
+    height: 72,
+    borderRadius: 14,
+    backgroundColor: '#0c1018',
+  },
+  mediaStateCopy: {
+    flex: 1,
+  },
+  mediaStateTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  mediaStateBody: {
+    color: '#d8e0ef',
+    marginTop: 4,
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  lockCard: {
+    marginHorizontal: 12,
+    marginBottom: 12,
+    padding: 16,
+    borderRadius: 18,
+    backgroundColor: '#121827',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   lockTitle: {
     color: '#fff',
@@ -1035,7 +1154,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
   },
   lockBody: {
-    color: '#c9c9c9',
+    color: '#d8e0ef',
     fontSize: 13,
     lineHeight: 18,
     marginTop: 8,
@@ -1048,13 +1167,15 @@ const styles = StyleSheet.create({
   },
   metricCard: {
     width: '48.5%',
-    backgroundColor: '#252525',
-    borderRadius: 10,
+    backgroundColor: '#121827',
+    borderRadius: 14,
     padding: 12,
     marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   metricLabel: {
-    color: '#bfbfbf',
+    color: '#ced7e6',
     fontSize: 12,
   },
   metricValue: {
@@ -1067,7 +1188,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: '700',
-    marginTop: 8,
+    marginTop: 10,
     marginBottom: 8,
   },
   exportRow: {
@@ -1076,8 +1197,8 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   primaryButton: {
-    backgroundColor: '#3498db',
-    borderRadius: 8,
+    backgroundColor: '#3d74ff',
+    borderRadius: 10,
     minHeight: 44,
     justifyContent: 'center',
     alignItems: 'center',
@@ -1096,10 +1217,10 @@ const styles = StyleSheet.create({
   },
   secondaryButton: {
     flex: 1,
-    backgroundColor: '#2f2f2f',
+    backgroundColor: '#192234',
     borderWidth: 1,
-    borderColor: '#555',
-    borderRadius: 8,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 10,
     minHeight: 42,
     alignItems: 'center',
     justifyContent: 'center',
@@ -1111,10 +1232,12 @@ const styles = StyleSheet.create({
     fontSize: 12,
   },
   teamRow: {
-    backgroundColor: '#222',
-    borderRadius: 10,
+    backgroundColor: '#121827',
+    borderRadius: 14,
     padding: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   teamRowTop: {
     flexDirection: 'row',
@@ -1139,10 +1262,10 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   registeredRow: {
-    backgroundColor: '#1d2b1f',
-    borderRadius: 10,
+    backgroundColor: '#13221b',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: '#2e5f35',
+    borderColor: '#2d6b47',
     padding: 10,
     marginBottom: 8,
   },
@@ -1158,17 +1281,17 @@ const styles = StyleSheet.create({
   },
   teamPicker: {
     maxHeight: 220,
-    backgroundColor: '#1f1f1f',
-    borderRadius: 10,
+    backgroundColor: '#121827',
+    borderRadius: 14,
     marginTop: 6,
   },
   teamPickRow: {
     padding: 10,
     borderBottomWidth: 1,
-    borderBottomColor: '#2f2f2f',
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
   },
   teamPickRowActive: {
-    backgroundColor: '#333',
+    backgroundColor: '#1a2438',
   },
   teamPickName: {
     color: '#fff',
@@ -1181,9 +1304,11 @@ const styles = StyleSheet.create({
   },
   evalFormCard: {
     marginTop: 12,
-    backgroundColor: '#1f1f1f',
-    borderRadius: 10,
+    backgroundColor: '#121827',
+    borderRadius: 14,
     padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
   },
   evalFormTitle: {
     color: '#fff',
@@ -1197,7 +1322,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   fieldLabel: {
-    color: '#d0d0d0',
+    color: '#d8e0ef',
     marginTop: 6,
     fontSize: 12,
   },
@@ -1214,7 +1339,7 @@ const styles = StyleSheet.create({
     marginBottom: 8,
   },
   errorText: {
-    color: '#ff7675',
+    color: '#ff8f8f',
     marginBottom: 8,
   },
   overlay: {
@@ -1224,10 +1349,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   overlaySuccess: {
-    backgroundColor: 'rgba(46, 204, 113, 0.95)',
+    backgroundColor: 'rgba(18, 86, 51, 0.95)',
   },
   overlayError: {
-    backgroundColor: 'rgba(231, 76, 60, 0.95)',
+    backgroundColor: 'rgba(113, 27, 27, 0.95)',
   },
   overlayText: {
     fontSize: 40,

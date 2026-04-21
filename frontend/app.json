@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "Breaking Enigma Console",
+    "name": "ACM VIT Hackathon",
     "slug": "breaking-enigma-console",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/acm-brand.png",
     "scheme": "breakingenigma",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -21,29 +21,27 @@
         "android.permission.CAMERA"
       ],
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/images/android-icon-foreground.png",
-        "backgroundImage": "./assets/images/android-icon-background.png",
-        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+        "backgroundColor": "#0a0d14",
+        "foregroundImage": "./assets/images/acm-brand-foreground.png"
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false
     },
     "web": {
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/images/acm-brand-favicon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/images/acm-brand.png",
           "imageWidth": 200,
           "resizeMode": "contain",
-          "backgroundColor": "#ffffff",
+          "backgroundColor": "#0a0d14",
           "dark": {
-            "backgroundColor": "#000000"
+            "backgroundColor": "#0a0d14"
           }
         }
       ],

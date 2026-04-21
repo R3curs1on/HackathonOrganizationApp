@@ -16,10 +16,9 @@ const HOST = process.env.HOST || '0.0.0.0';
 const DEFAULT_LAB_NO = process.env.DEFAULT_LAB_NO || '1000';
 const TECH_PASSPHRASES = String(
   process.env.TECH_PASSPHRASES || 'acm@enigma,youdontknowmeson'
-)
-  .split(',')
-  .map((value) => value.trim())
-  .filter(Boolean);
+).split(',')
+.map((value) => value.trim())
+.filter(Boolean);
 
 function now() {
   return new Date().toISOString();
@@ -721,15 +720,6 @@ app.get('/exports/evaluations', requireTechAccess, async (req, res) => {
     return res.status(500).json({ error: err.message });
   }
 });
-
-// app.listen(PORT, HOST, () => {
-//   log('SERVER_LISTENING', {
-//     host: HOST,
-//     port: PORT,
-//     localhostUrl: `http://127.0.0.1:${PORT}`,
-//     networkUrls: getNetworkUrls(),
-//   });
-// });
 
 app.listen(PORT, HOST, () => {
   log('SERVER_LISTENING', {
