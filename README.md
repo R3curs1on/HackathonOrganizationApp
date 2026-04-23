@@ -2,6 +2,8 @@
 
 Expo + Node/Mongo app for hackathon operations: QR-based registration, live team dashboard, and team evaluations.
 
+![Demo](website/demoRecording.gif)
+
 ## Stack
 - Frontend: Expo React Native
 - Backend: Express + Mongoose
