@@ -28,4 +28,11 @@ BreakingEnigmaResponses.csv
 
 BreakingEnigma_initial.apk
 
+BreakingEnigma_final.apk
+
 trash/
+
+
+.env 
+
+node_modules/

@@ -31,6 +31,7 @@ Expo + Node/Mongo app for hackathon operations: QR-based registration, live team
 ## Environment Templates
 - Backend template: `backend/.env.example`
 - Frontend template: `frontend/.env.example`
+- Admin website template: `website/.env.example`
 
 Optional local setup from repo root:
 ```bash
@@ -80,6 +81,22 @@ npm install
 EXPO_PUBLIC_API_URL=<your-lan-ip>:5000 npx expo start --lan
 ```
 
+### 7) Start the admin visualizer website
+This is a separate, read-only companion site that uses the same backend API and MongoDB data.
+
+```bash
+cd website
+npm install
+cp .env.example .env
+npm start
+```
+
+Required env values for the website:
+- `BACKEND_API_URL` - your backend URL, for example `http://127.0.0.1:5000` or the deployed Render URL
+- `TECH_PASSPHRASE` - one of the backend passphrases so the site can fetch protected dashboard/evaluation data
+
+Open `http://127.0.0.1:3001` after the server starts.
+
 ## Live Deployment (Recommended)
 
 Why local fails for cloud APK builds:
@@ -104,14 +121,14 @@ Why local fails for cloud APK builds:
 
 After deploy, verify:
 ```bash
-curl https://<https://hackathonorganizationapp.onrender.com>/health
+curl https://hackathonorganizationapp.onrender.com/health
 ```
 
 ### 3) Set EAS environment variable for frontend builds
 From `frontend/`:
 ```bash
-eas env:create --name EXPO_PUBLIC_API_URL --value https://<https://hackathonorganizationapp.onrender.com> --environment preview --visibility plaintext
-eas env:create --name EXPO_PUBLIC_API_URL --value https://<https://hackathonorganizationapp.onrender.com> --environment production --visibility plaintext
+eas env:create --name EXPO_PUBLIC_API_URL --value https://hackathonorganizationapp.onrender.com --environment preview --visibility plaintext
+eas env:create --name EXPO_PUBLIC_API_URL --value https://hackathonorganizationapp.onrender.com --environment production --visibility plaintext
 ```
 
 ### 4) Build a new Android APK

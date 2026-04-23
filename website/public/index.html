@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>Breaking Enigma Admin Visualizer</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <script defer src="/app.js"></script>
+  </head>
+  <body>
+    <div class="bg-orb orb-one"></div>
+    <div class="bg-orb orb-two"></div>
+    <div class="bg-grid"></div>
+
+    <main class="shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">BE</div>
+          <div>
+            <p class="eyebrow">Complimentary admin site</p>
+            <h1>Breaking Enigma visualizer</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-chip" id="backend-status">Connecting</span>
+          <button class="ghost-button" id="refresh-button" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <section class="hero">
+        <div class="hero-copy">
+          <p class="kicker">Read-only dashboard</p>
+          <h2>Teams, evaluations, and exports in one compact visual view.</h2>
+          <p class="hero-text">
+            This site uses the same backend API and database as the mobile app. It removes scanning and focuses on
+            clean analytics for admins, judges, and coordinators.
+          </p>
+          <div class="stat-strip" id="stat-strip"></div>
+        </div>
+
+        <aside class="hero-panel">
+          <div class="panel-label">Live summary</div>
+          <div class="summary-row">
+            <span>Completion</span>
+            <strong id="completion-value">--</strong>
+          </div>
+          <div class="summary-row">
+            <span>Average total</span>
+            <strong id="average-score-value">--</strong>
+          </div>
+          <div class="summary-row">
+            <span>Top team</span>
+            <strong id="top-team-value">--</strong>
+          </div>
+          <div class="summary-row">
+            <span>Last sync</span>
+            <strong id="last-sync-value">--</strong>
+          </div>
+        </aside>
+      </section>
+
+      <section class="grid two-col">
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Team distribution</p>
+              <h3>Registered vs pending</h3>
+            </div>
+          </div>
+          <div class="chart-wrap chart-center">
+            <svg id="team-donut" viewBox="0 0 260 260" role="img" aria-label="Team status donut chart"></svg>
+          </div>
+          <div class="legend" id="team-legend"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Team sizes</p>
+              <h3>Participants per team</h3>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="team-bars" viewBox="0 0 680 340" role="img" aria-label="Team size bar chart"></svg>
+          </div>
+        </article>
+      </section>
+
+      <section class="grid two-col">
+        <article class="panel panel-wide">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Time series</p>
+              <h3>Evaluated teams over time</h3>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="timeline-chart" viewBox="0 0 860 320" role="img" aria-label="Evaluation timeline chart"></svg>
+          </div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Leaderboard</p>
+              <h3>Top scoring teams</h3>
+            </div>
+          </div>
+          <div class="leaderboard" id="leaderboard"></div>
+        </article>
+      </section>
+
+      <section class="panel export-panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Clean exports</p>
+            <h3>One-click CSV and JSON downloads</h3>
+          </div>
+        </div>
+        <div class="export-grid">
+          <a class="export-card" href="/api/export/teams?format=csv">
+            <span>Teams CSV</span>
+            <small>Team overview, registration status, and lab numbers.</small>
+          </a>
+          <a class="export-card" href="/api/export/participants?format=csv">
+            <span>Participants CSV</span>
+            <small>All participant records with attendance flags.</small>
+          </a>
+          <a class="export-card" href="/api/export/evaluations?format=csv">
+            <span>Evaluations CSV</span>
+            <small>Score breakdown and final totals for each team.</small>
+          </a>
+          <a class="export-card" href="/api/export/teams?format=json">
+            <span>Teams JSON</span>
+            <small>Structured data for secondary analysis or tools.</small>
+          </a>
+          <a class="export-card" href="/api/export/participants?format=json">
+            <span>Participants JSON</span>
+            <small>Clean participant export for reporting pipelines.</small>
+          </a>
+          <a class="export-card" href="/api/export/evaluations?format=json">
+            <span>Evaluations JSON</span>
+            <small>Machine-friendly evaluation snapshot.</small>
+          </a>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="panel-kicker">Snapshot</p>
+            <h3>Recent evaluations</h3>
+          </div>
+        </div>
+        <div class="recent-list" id="recent-list"></div>
+      </section>
+
+      <p class="footer-note" id="status-note"></p>
+    </main>
+  </body>
+</html>
