@@ -54,7 +54,7 @@ const LOCAL_ENV_LOADED = loadLocalEnvFile();
 const app = express();
 const rawPort = Number(process.env.PORT);
 const PORT = Number.isInteger(rawPort) && rawPort >= 0 && rawPort < 65536 ? rawPort : 3001;
-const BACKEND_API_URL = normalizeBaseUrl(process.env.BACKEND_API_URL || 'http://127.0.0.1:5000');
+const BACKEND_API_URL = normalizeBaseUrl(process.env.BACKEND_API_URL)// || 'http://127.0.0.1:5000');
 const TECH_PASSPHRASE = String(process.env.TECH_PASSPHRASE || '').trim();
 const PUBLIC_DIR = path.join(__dirname, 'public');
 const INDEX_FILE = path.join(PUBLIC_DIR, 'index.html');
@@ -205,6 +205,18 @@ function buildTimeline(evaluations) {
   });
 }
 
+function median(values) {
+  if (!values.length) {
+    return 0;
+  }
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[middle - 1] + sorted[middle]) / 2
+    : sorted[middle];
+}
+
 function summarizeData(dashboard, evaluationResponse, health) {
   const stats = dashboard || {};
   const teams = Array.isArray(dashboard?.teams) ? dashboard.teams : [];
@@ -231,10 +243,32 @@ function summarizeData(dashboard, evaluationResponse, health) {
   });
 
   const evaluatedTeams = evaluations.filter((entry) => entry.evaluated || toFiniteNumber(entry.total) > 0);
-  const totalScore = evaluatedTeams.reduce((sum, entry) => sum + toFiniteNumber(entry.total), 0);
-  const averageScore = evaluatedTeams.length ? totalScore / evaluatedTeams.length : 0;
+  const scoreValues = evaluatedTeams.map((entry) => toFiniteNumber(entry.total)).filter((value) => value >= 0);
+  const totalScore = scoreValues.reduce((sum, value) => sum + value, 0);
+  const averageScore = scoreValues.length ? totalScore / scoreValues.length : 0;
+  const scoreMin = scoreValues.length ? Math.min(...scoreValues) : 0;
+  const scoreMax = scoreValues.length ? Math.max(...scoreValues) : 0;
+  const scoreSpread = scoreMax - scoreMin;
+  const scoreSpreadRatio = scoreMax > 0 ? scoreSpread / scoreMax : 0;
   const highestScore = leaderboard[0] || null;
   const timeline = buildTimeline(evaluations);
+  const scoreDistribution = buildScoreDistribution(scoreValues);
+  const completionRate = toFiniteNumber(stats.totalTeams) > 0
+    ? toFiniteNumber(stats.registeredTeams) / toFiniteNumber(stats.totalTeams)
+    : 0;
+  const checkInRate = toFiniteNumber(stats.totalParticipants) > 0
+    ? toFiniteNumber(stats.registeredParticipants) / toFiniteNumber(stats.totalParticipants)
+    : 0;
+  const dinnerRate = toFiniteNumber(stats.totalParticipants) > 0
+    ? toFiniteNumber(stats.dinnerTaken) / toFiniteNumber(stats.totalParticipants)
+    : 0;
+  const evaluationCoverage = toFiniteNumber(stats.totalTeams) > 0
+    ? evaluatedTeams.length / toFiniteNumber(stats.totalTeams)
+    : 0;
+  const averageTeamSize = toFiniteNumber(stats.totalTeams) > 0
+    ? toFiniteNumber(stats.totalParticipants) / toFiniteNumber(stats.totalTeams)
+    : 0;
+  const medianScore = median(scoreValues);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -251,15 +285,27 @@ function summarizeData(dashboard, evaluationResponse, health) {
       registeredTeams: toFiniteNumber(stats.registeredTeams),
       remainingTeams: toFiniteNumber(stats.remainingTeams),
     },
+    derived: {
+      completionRate,
+      checkInRate,
+      dinnerRate,
+      evaluationCoverage,
+      averageTeamSize,
+      evaluatedTeams: evaluatedTeams.length,
+      averageScore: Number(averageScore.toFixed(2)),
+      medianScore: Number(medianScore.toFixed(2)),
+      scoreMin: Number(scoreMin.toFixed(2)),
+      scoreMax: Number(scoreMax.toFixed(2)),
+      scoreSpread: Number(scoreSpread.toFixed(2)),
+      scoreSpreadRatio,
+      topScore: highestScore ? toFiniteNumber(highestScore.total) : 0,
+    },
     charts: {
       teamStatus: [
         { label: 'Registered teams', value: toFiniteNumber(stats.registeredTeams), color: '#f5c84c' },
         { label: 'Pending teams', value: toFiniteNumber(stats.remainingTeams), color: '#3b4a62' },
       ],
-      participantStatus: [
-        { label: 'Checked in', value: toFiniteNumber(stats.registeredParticipants), color: '#7cd7a8' },
-        { label: 'Waiting', value: toFiniteNumber(stats.remainingParticipants), color: '#3b4a62' },
-      ],
+      scoreDistribution,
       teamSizes: topTeams.slice(0, 8).map((team) => ({
         team_name: team.team_name || 'Unassigned Team',
         lab_no: team.lab_no || '1000',
@@ -301,6 +347,46 @@ function summarizeData(dashboard, evaluationResponse, health) {
       updatedAt: entry.updatedAt || null,
     })),
   };
+}
+
+function buildScoreDistribution(values) {
+  const cleaned = values.map((value) => Number(value) || 0).filter((value) => value >= 0);
+  if (!cleaned.length) {
+    return [];
+  }
+
+  const min = Math.min(...cleaned);
+  const max = Math.max(...cleaned);
+  if (min === max) {
+    return [
+      {
+        label: `${toFiniteNumber(min).toFixed(2)}`,
+        value: cleaned.length,
+        start: min,
+        end: max,
+      },
+    ];
+  }
+
+  const bucketCount = Math.min(6, Math.max(3, cleaned.length));
+  const buckets = Array.from({ length: bucketCount }, () => 0);
+  const step = (max - min) / bucketCount;
+
+  cleaned.forEach((value) => {
+    const index = Math.min(bucketCount - 1, Math.floor((value - min) / step));
+    buckets[index] += 1;
+  });
+
+  return buckets.map((count, index) => {
+    const start = min + step * index;
+    const end = index === bucketCount - 1 ? max : min + step * (index + 1);
+    return {
+      label: `${toFiniteNumber(start).toFixed(1)}-${toFiniteNumber(end).toFixed(1)}`,
+      value: count,
+      start,
+      end,
+    };
+  });
 }
 
 async function loadSummary() {

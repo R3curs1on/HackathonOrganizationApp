@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
-    <title>Breaking Enigma Admin Visualizer</title>
+    <title>Breaking Enigma Monitor</title>
     <link rel="stylesheet" href="/styles.css" />
     <script defer src="/app.js"></script>
   </head>
@@ -18,53 +18,107 @@
         <div class="brand">
           <div class="brand-mark">BE</div>
           <div>
-            <p class="eyebrow">Complimentary admin site</p>
-            <h1>Breaking Enigma visualizer</h1>
+            <p class="eyebrow">Read-only admin view</p>
+            <h1>Breaking Enigma monitor</h1>
+            <p class="topbar-note">Minimal live analytics for admins, judges, and coordinators.</p>
           </div>
         </div>
         <div class="topbar-actions">
           <span class="status-chip" id="backend-status">Connecting</span>
-          <button class="ghost-button" id="refresh-button" type="button">Refresh</button>
+          <button class="ghost-button" id="refresh-button" type="button">Sync</button>
         </div>
       </header>
 
       <section class="hero">
-        <div class="hero-copy">
-          <p class="kicker">Read-only dashboard</p>
-          <h2>Teams, evaluations, and exports in one compact visual view.</h2>
+        <div class="hero-copy panel" style="--delay: 0ms">
+          <p class="kicker">Live summary</p>
+          <h2>Small, quiet, and useful. The data stays readable instead of loud.</h2>
           <p class="hero-text">
-            This site uses the same backend API and database as the mobile app. It removes scanning and focuses on
-            clean analytics for admins, judges, and coordinators.
+            This companion site uses the same backend and database as the mobile app. It removes scanning entirely and
+            turns the event state into a compact visual summary.
           </p>
           <div class="stat-strip" id="stat-strip"></div>
         </div>
 
-        <aside class="hero-panel">
-          <div class="panel-label">Live summary</div>
-          <div class="summary-row">
-            <span>Completion</span>
-            <strong id="completion-value">--</strong>
+        <aside class="hero-panel panel" style="--delay: 80ms">
+          <div class="panel-label">Current state</div>
+          <div class="signal-list">
+            <div class="signal-row">
+              <div>
+                <span>Team completion</span>
+                <strong id="completion-value">--</strong>
+              </div>
+              <small id="completion-meta">--</small>
+            </div>
+            <div class="signal-row">
+              <div>
+                <span>Check-in rate</span>
+                <strong id="participant-rate-value">--</strong>
+              </div>
+              <small id="participant-rate-meta">--</small>
+            </div>
+            <div class="signal-row">
+              <div>
+                <span>Evaluation coverage</span>
+                <strong id="coverage-value">--</strong>
+              </div>
+              <small id="coverage-meta">--</small>
+            </div>
+            <div class="signal-row">
+              <div>
+                <span>Average score</span>
+                <strong id="average-score-value">--</strong>
+              </div>
+              <small id="score-meta">--</small>
+            </div>
           </div>
-          <div class="summary-row">
-            <span>Average total</span>
-            <strong id="average-score-value">--</strong>
-          </div>
-          <div class="summary-row">
-            <span>Top team</span>
-            <strong id="top-team-value">--</strong>
-          </div>
-          <div class="summary-row">
+          <div class="hero-foot">
             <span>Last sync</span>
             <strong id="last-sync-value">--</strong>
           </div>
         </aside>
       </section>
 
-      <section class="grid two-col">
-        <article class="panel">
+      <section class="insight-grid">
+        <article class="insight-card panel" style="--delay: 160ms">
+          <div class="insight-copy">
+            <p>Teams</p>
+            <h3 id="teams-summary-value">--</h3>
+            <small id="teams-summary-meta">--</small>
+          </div>
+          <div class="mini-bar"><span id="teams-summary-bar"></span></div>
+        </article>
+        <article class="insight-card panel" style="--delay: 200ms">
+          <div class="insight-copy">
+            <p>Participants</p>
+            <h3 id="participants-summary-value">--</h3>
+            <small id="participants-summary-meta">--</small>
+          </div>
+          <div class="mini-bar"><span id="participants-summary-bar"></span></div>
+        </article>
+        <article class="insight-card panel" style="--delay: 240ms">
+          <div class="insight-copy">
+            <p>Dinner uptake</p>
+            <h3 id="dinner-summary-value">--</h3>
+            <small id="dinner-summary-meta">--</small>
+          </div>
+          <div class="mini-bar"><span id="dinner-summary-bar"></span></div>
+        </article>
+        <article class="insight-card panel" style="--delay: 280ms">
+          <div class="insight-copy">
+            <p>Score spread</p>
+            <h3 id="score-spread-value">--</h3>
+            <small id="score-spread-meta">--</small>
+          </div>
+          <div class="mini-bar"><span id="score-spread-bar"></span></div>
+        </article>
+      </section>
+
+      <section class="analytics-grid">
+        <article class="panel chart-panel" style="--delay: 320ms">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Team distribution</p>
+              <p class="panel-kicker">Team mix</p>
               <h3>Registered vs pending</h3>
             </div>
           </div>
@@ -74,7 +128,7 @@
           <div class="legend" id="team-legend"></div>
         </article>
 
-        <article class="panel">
+        <article class="panel chart-panel" style="--delay: 360ms">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">Team sizes</p>
@@ -85,13 +139,23 @@
             <svg id="team-bars" viewBox="0 0 680 340" role="img" aria-label="Team size bar chart"></svg>
           </div>
         </article>
-      </section>
 
-      <section class="grid two-col">
-        <article class="panel panel-wide">
+        <article class="panel chart-panel" style="--delay: 400ms">
           <div class="panel-head">
             <div>
-              <p class="panel-kicker">Time series</p>
+              <p class="panel-kicker">Score spread</p>
+              <h3>Evaluation totals</h3>
+            </div>
+          </div>
+          <div class="chart-wrap">
+            <svg id="score-distribution" viewBox="0 0 680 320" role="img" aria-label="Score distribution chart"></svg>
+          </div>
+        </article>
+
+        <article class="panel chart-panel" style="--delay: 440ms">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Trend</p>
               <h3>Evaluated teams over time</h3>
             </div>
           </div>
@@ -99,8 +163,10 @@
             <svg id="timeline-chart" viewBox="0 0 860 320" role="img" aria-label="Evaluation timeline chart"></svg>
           </div>
         </article>
+      </section>
 
-        <article class="panel">
+      <section class="lower-grid">
+        <article class="panel leaderboard-panel" style="--delay: 480ms">
           <div class="panel-head">
             <div>
               <p class="panel-kicker">Leaderboard</p>
@@ -109,51 +175,51 @@
           </div>
           <div class="leaderboard" id="leaderboard"></div>
         </article>
+
+        <article class="panel recent-panel" style="--delay: 520ms">
+          <div class="panel-head">
+            <div>
+              <p class="panel-kicker">Recent</p>
+              <h3>Latest evaluations</h3>
+            </div>
+          </div>
+          <div class="recent-list" id="recent-list"></div>
+        </article>
       </section>
 
-      <section class="panel export-panel">
+      <section class="panel export-panel" style="--delay: 560ms">
         <div class="panel-head">
           <div>
-            <p class="panel-kicker">Clean exports</p>
-            <h3>One-click CSV and JSON downloads</h3>
+            <p class="panel-kicker">Exports</p>
+            <h3>Clean downloads</h3>
           </div>
         </div>
         <div class="export-grid">
           <a class="export-card" href="/api/export/teams?format=csv">
             <span>Teams CSV</span>
-            <small>Team overview, registration status, and lab numbers.</small>
+            <small>Registration status and lab mapping.</small>
           </a>
           <a class="export-card" href="/api/export/participants?format=csv">
             <span>Participants CSV</span>
-            <small>All participant records with attendance flags.</small>
+            <small>Attendance flags and participant records.</small>
           </a>
           <a class="export-card" href="/api/export/evaluations?format=csv">
             <span>Evaluations CSV</span>
-            <small>Score breakdown and final totals for each team.</small>
+            <small>Score breakdown and totals.</small>
           </a>
           <a class="export-card" href="/api/export/teams?format=json">
             <span>Teams JSON</span>
-            <small>Structured data for secondary analysis or tools.</small>
+            <small>Structured payload for tooling.</small>
           </a>
           <a class="export-card" href="/api/export/participants?format=json">
             <span>Participants JSON</span>
-            <small>Clean participant export for reporting pipelines.</small>
+            <small>Machine-friendly participant data.</small>
           </a>
           <a class="export-card" href="/api/export/evaluations?format=json">
             <span>Evaluations JSON</span>
-            <small>Machine-friendly evaluation snapshot.</small>
+            <small>Structured evaluation snapshot.</small>
           </a>
         </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <p class="panel-kicker">Snapshot</p>
-            <h3>Recent evaluations</h3>
-          </div>
-        </div>
-        <div class="recent-list" id="recent-list"></div>
       </section>
 
       <p class="footer-note" id="status-note"></p>
